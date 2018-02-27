@@ -18,6 +18,7 @@ def parse_region_data(file1, file2):
                 w = object_['w']
                 h = object_['h']
                 name = object_['names'][0]
+                name = name.replace(',', '')
                 doc.write(path + ',' + str(x) + ',' + str(y) + ',' + str(w) + ',' + str(h) + ',' + name + '\n')
             i += 1
             print(str(i) + '/' + str(len(data)))
@@ -42,5 +43,5 @@ def download_images(file):
 
 objects_json = 'objects.json'
 object_labels = 'object_labels.txt'
-# parse_region_data(objects_json, object_labels)
-download_images(objects_json)
+parse_region_data(objects_json, object_labels)
+# download_images(objects_json)
