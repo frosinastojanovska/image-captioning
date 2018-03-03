@@ -1977,7 +1977,7 @@ class MaskRCNN:
         """Modified version of the correspoding Keras function with
         the addition of multi-GPU support and the ability to exclude
         some layers from loading.
-        exlude: list of layer names to excluce
+        exlude: list of layer names to exclude
         """
         import h5py
         from keras.engine import topology
@@ -2097,7 +2097,7 @@ class MaskRCNN:
                 layer.layer.trainable = trainable
             else:
                 layer.trainable = trainable
-            # Print trainble layer names
+            # Print trainable layer names
             if trainable and verbose > 0:
                 log("{}{:20}   ({})".format(" " * indent, layer.name,
                                             layer.__class__.__name__))

@@ -155,3 +155,5 @@ fabric.properties
 # Large files
 objects.json
 object_labels.txt
+mask_rcnn_coco.h5
+rcnn_coco.h5
