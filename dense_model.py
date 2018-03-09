@@ -1,20 +1,13 @@
 """
-Mask R-CNN
-The main Mask R-CNN model implementation.
+Image Captioning model
+The Image Captioning model implementation.
 
-Copyright (c) 2017 Matterport, Inc.
-Licensed under the MIT License (see LICENSE for details)
-Written by Waleed Abdulla
+Code taken from https://github.com/matterport/Mask_RCNN and modified by Frosina Stojanovska and Martina Toshevska
 """
 
 import os
-import sys
-import glob
 import random
-import math
 import datetime
-import itertools
-import json
 import re
 import logging
 from collections import OrderedDict
@@ -24,7 +17,6 @@ import tensorflow as tf
 import keras
 import keras.backend as K
 import keras.layers as KL
-import keras.initializers as KI
 import keras.engine as KE
 import keras.models as KM
 
@@ -456,25 +448,20 @@ def overlaps_graph(boxes1, boxes2):
     return overlaps
 
 
-def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config):
+def detection_targets_graph(proposals, gt_captions, gt_boxes, config):
     """Generates detection targets for one image. Subsamples proposals and
     generates target class IDs, bounding box deltas, and masks for each.
 
     Inputs:
     proposals: [N, (y1, x1, y2, x2)] in normalized coordinates. Might
                be zero padded if there are not enough proposals.
-    gt_class_ids: [MAX_GT_INSTANCES] int class IDs
+    gt_captions: [MAX_GT_INSTANCES] string captions
     gt_boxes: [MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized coordinates.
-    gt_masks: [height, width, MAX_GT_INSTANCES] of boolean type.
 
     Returns: Target ROIs and corresponding class IDs, bounding box shifts,
     and masks.
     rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized coordinates
-    class_ids: [TRAIN_ROIS_PER_IMAGE]. Integer class IDs. Zero padded.
-    deltas: [TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
-            Class-specific bbox refinments.
-    masks: [TRAIN_ROIS_PER_IMAGE, height, width). Masks cropped to bbox
-           boundaries and resized to neural network output size.
+    captions: [TRAIN_ROIS_PER_IMAGE]. String captions.
 
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
@@ -489,37 +476,35 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     # Remove zero padding
     proposals, _ = trim_zeros_graph(proposals, name="trim_proposals")
     gt_boxes, non_zeros = trim_zeros_graph(gt_boxes, name="trim_gt_boxes")
-    gt_class_ids = tf.boolean_mask(gt_class_ids, non_zeros,
-                                   name="trim_gt_class_ids")
-    gt_masks = tf.gather(gt_masks, tf.where(non_zeros)[:, 0], axis=2,
-                         name="trim_gt_masks")
+    gt_captions = tf.boolean_mask(gt_captions, non_zeros,
+                                  name="trim_gt_captions")
 
-    # Handle COCO crowds
-    # A crowd box in COCO is a bounding box around several instances. Exclude
-    # them from training. A crowd box is given a negative class ID.
-    crowd_ix = tf.where(gt_class_ids < 0)[:, 0]
-    non_crowd_ix = tf.where(gt_class_ids > 0)[:, 0]
-    crowd_boxes = tf.gather(gt_boxes, crowd_ix)
-    crowd_masks = tf.gather(gt_masks, crowd_ix, axis=2)
-    gt_class_ids = tf.gather(gt_class_ids, non_crowd_ix)
-    gt_boxes = tf.gather(gt_boxes, non_crowd_ix)
-    gt_masks = tf.gather(gt_masks, non_crowd_ix, axis=2)
+    # # Handle COCO crowds
+    # # A crowd box in COCO is a bounding box around several instances. Exclude
+    # # them from training. A crowd box is given a negative class ID.
+    # crowd_ix = tf.where(gt_class_ids < 0)[:, 0]
+    # non_crowd_ix = tf.where(gt_class_ids > 0)[:, 0]
+    # crowd_boxes = tf.gather(gt_boxes, crowd_ix)
+    # crowd_masks = tf.gather(gt_masks, crowd_ix, axis=2)
+    # gt_class_ids = tf.gather(gt_class_ids, non_crowd_ix)
+    # gt_boxes = tf.gather(gt_boxes, non_crowd_ix)
+    # gt_masks = tf.gather(gt_masks, non_crowd_ix, axis=2)
 
     # Compute overlaps matrix [proposals, gt_boxes]
     overlaps = overlaps_graph(proposals, gt_boxes)
 
-    # Compute overlaps with crowd boxes [anchors, crowds]
-    crowd_overlaps = overlaps_graph(proposals, crowd_boxes)
-    crowd_iou_max = tf.reduce_max(crowd_overlaps, axis=1)
-    no_crowd_bool = (crowd_iou_max < 0.001)
+    # # Compute overlaps with crowd boxes [anchors, crowds]
+    # crowd_overlaps = overlaps_graph(proposals, crowd_boxes)
+    # crowd_iou_max = tf.reduce_max(crowd_overlaps, axis=1)
+    # no_crowd_bool = (crowd_iou_max < 0.001)
 
-    # Determine postive and negative ROIs
+    # Determine positive and negative ROIs
     roi_iou_max = tf.reduce_max(overlaps, axis=1)
     # 1. Positive ROIs are those with >= 0.5 IoU with a GT box
     positive_roi_bool = (roi_iou_max >= 0.5)
     positive_indices = tf.where(positive_roi_bool)[:, 0]
     # 2. Negative ROIs are those with < 0.5 with every GT box. Skip crowds.
-    negative_indices = tf.where(tf.logical_and(roi_iou_max < 0.5, no_crowd_bool))[:, 0]
+    negative_indices = tf.where(roi_iou_max < 0.5)[:, 0]
 
     # Subsample ROIs. Aim for 33% positive
     # Positive ROIs
@@ -539,42 +524,42 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     positive_overlaps = tf.gather(overlaps, positive_indices)
     roi_gt_box_assignment = tf.argmax(positive_overlaps, axis=1)
     roi_gt_boxes = tf.gather(gt_boxes, roi_gt_box_assignment)
-    roi_gt_class_ids = tf.gather(gt_class_ids, roi_gt_box_assignment)
+    roi_gt_captions = tf.gather(gt_captions, roi_gt_box_assignment)
 
     # Compute bbox refinement for positive ROIs
     deltas = utils.box_refinement_graph(positive_rois, roi_gt_boxes)
     deltas /= config.BBOX_STD_DEV
 
-    # Assign positive ROIs to GT masks
-    # Permute masks to [N, height, width, 1]
-    transposed_masks = tf.expand_dims(tf.transpose(gt_masks, [2, 0, 1]), -1)
-    # Pick the right mask for each ROI
-    roi_masks = tf.gather(transposed_masks, roi_gt_box_assignment)
-
-    # Compute mask targets
-    boxes = positive_rois
-    if config.USE_MINI_MASK:
-        # Transform ROI corrdinates from normalized image space
-        # to normalized mini-mask space.
-        y1, x1, y2, x2 = tf.split(positive_rois, 4, axis=1)
-        gt_y1, gt_x1, gt_y2, gt_x2 = tf.split(roi_gt_boxes, 4, axis=1)
-        gt_h = gt_y2 - gt_y1
-        gt_w = gt_x2 - gt_x1
-        y1 = (y1 - gt_y1) / gt_h
-        x1 = (x1 - gt_x1) / gt_w
-        y2 = (y2 - gt_y1) / gt_h
-        x2 = (x2 - gt_x1) / gt_w
-        boxes = tf.concat([y1, x1, y2, x2], 1)
-    box_ids = tf.range(0, tf.shape(roi_masks)[0])
-    masks = tf.image.crop_and_resize(tf.cast(roi_masks, tf.float32), boxes,
-                                     box_ids,
-                                     config.MASK_SHAPE)
-    # Remove the extra dimension from masks.
-    masks = tf.squeeze(masks, axis=3)
-
-    # Threshold mask pixels at 0.5 to have GT masks be 0 or 1 to use with
-    # binary cross entropy loss.
-    masks = tf.round(masks)
+    # # Assign positive ROIs to GT masks
+    # # Permute masks to [N, height, width, 1]
+    # transposed_masks = tf.expand_dims(tf.transpose(gt_masks, [2, 0, 1]), -1)
+    # # Pick the right mask for each ROI
+    # roi_masks = tf.gather(transposed_masks, roi_gt_box_assignment)
+    #
+    # # Compute mask targets
+    # boxes = positive_rois
+    # if config.USE_MINI_MASK:
+    #     # Transform ROI corrdinates from normalized image space
+    #     # to normalized mini-mask space.
+    #     y1, x1, y2, x2 = tf.split(positive_rois, 4, axis=1)
+    #     gt_y1, gt_x1, gt_y2, gt_x2 = tf.split(roi_gt_boxes, 4, axis=1)
+    #     gt_h = gt_y2 - gt_y1
+    #     gt_w = gt_x2 - gt_x1
+    #     y1 = (y1 - gt_y1) / gt_h
+    #     x1 = (x1 - gt_x1) / gt_w
+    #     y2 = (y2 - gt_y1) / gt_h
+    #     x2 = (x2 - gt_x1) / gt_w
+    #     boxes = tf.concat([y1, x1, y2, x2], 1)
+    # box_ids = tf.range(0, tf.shape(roi_masks)[0])
+    # masks = tf.image.crop_and_resize(tf.cast(roi_masks, tf.float32), boxes,
+    #                                  box_ids,
+    #                                  config.MASK_SHAPE)
+    # # Remove the extra dimension from masks.
+    # masks = tf.squeeze(masks, axis=3)
+    #
+    # # Threshold mask pixels at 0.5 to have GT masks be 0 or 1 to use with
+    # # binary cross entropy loss.
+    # masks = tf.round(masks)
 
     # Append negative ROIs and pad bbox deltas and masks that
     # are not used for negative ROIs with zeros.
@@ -583,11 +568,10 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     P = tf.maximum(config.TRAIN_ROIS_PER_IMAGE - tf.shape(rois)[0], 0)
     rois = tf.pad(rois, [(0, P), (0, 0)])
     roi_gt_boxes = tf.pad(roi_gt_boxes, [(0, N + P), (0, 0)])
-    roi_gt_class_ids = tf.pad(roi_gt_class_ids, [(0, N + P)])
+    roi_gt_captions = tf.pad(roi_gt_captions, [(0, N + P)])
     deltas = tf.pad(deltas, [(0, N + P), (0, 0)])
-    masks = tf.pad(masks, [[0, N + P], (0, 0), (0, 0)])
 
-    return rois, roi_gt_class_ids, deltas, masks
+    return rois, roi_gt_captions, deltas
 
 
 class DetectionTargetLayer(KE.Layer):
@@ -597,22 +581,14 @@ class DetectionTargetLayer(KE.Layer):
     Inputs:
     proposals: [batch, N, (y1, x1, y2, x2)] in normalized coordinates. Might
                be zero padded if there are not enough proposals.
-    gt_class_ids: [batch, MAX_GT_INSTANCES] Integer class IDs.
+    gt_captions: [batch, MAX_GT_INSTANCES] String captions.
     gt_boxes: [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized
               coordinates.
-    gt_masks: [batch, height, width, MAX_GT_INSTANCES] of boolean type
 
-    Returns: Target ROIs and corresponding class IDs, bounding box shifts,
-    and masks.
+    Returns: Target ROIs and corresponding captions.
     rois: [batch, TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized
           coordinates
-    target_class_ids: [batch, TRAIN_ROIS_PER_IMAGE]. Integer class IDs.
-    target_deltas: [batch, TRAIN_ROIS_PER_IMAGE, NUM_CLASSES,
-                    (dy, dx, log(dh), log(dw), class_id)]
-                   Class-specific bbox refinments.
-    target_mask: [batch, TRAIN_ROIS_PER_IMAGE, height, width)
-                 Masks cropped to bbox boundaries and resized to neural
-                 network output size.
+    target_captions: [batch, TRAIN_ROIS_PER_IMAGE]. String captions.
 
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
@@ -623,35 +599,29 @@ class DetectionTargetLayer(KE.Layer):
 
     def call(self, inputs):
         proposals = inputs[0]
-        gt_class_ids = inputs[1]
+        gt_captions = inputs[1]
         gt_boxes = inputs[2]
-        gt_masks = inputs[3]
 
         # Slice the batch and run a graph for each slice
         # TODO: Rename target_bbox to target_deltas for clarity
-        names = ["rois", "target_class_ids", "target_bbox", "target_mask"]
+        names = ["rois", "target_captions", "target_bbox"]
         outputs = utils.batch_slice(
-            [proposals, gt_class_ids, gt_boxes, gt_masks],
-            lambda w, x, y, z: detection_targets_graph(
-                w, x, y, z, self.config),
+            [proposals, gt_captions, gt_boxes],
+            lambda w, x, y: detection_targets_graph(
+                w, x, y, self.config),
             self.config.IMAGES_PER_GPU, names=names)
         return outputs
 
     def compute_output_shape(self, input_shape):
         return [
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # rois
-            (None, 1),  # class_ids
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # deltas
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.MASK_SHAPE[0],
-             self.config.MASK_SHAPE[1])  # masks
+            (None, 1),  # captions
+            (None, self.config.TRAIN_ROIS_PER_IMAGE, 4)  # deltas
         ]
-
-    def compute_mask(self, inputs, mask=None):
-        return [None, None, None, None]
 
 
 ############################################################
-#  Detection Layer
+#  Generation Match Layer
 ############################################################
 
 def clip_to_window(window, boxes):
@@ -666,80 +636,9 @@ def clip_to_window(window, boxes):
     return boxes
 
 
-def refine_detections(rois, probs, deltas, window, config):
-    """Refine classified proposals and filter overlaps and return final
-    detections.
-
-    Inputs:
-        rois: [N, (y1, x1, y2, x2)] in normalized coordinates
-        probs: [N, num_classes]. Class probabilities.
-        deltas: [N, num_classes, (dy, dx, log(dh), log(dw))]. Class-specific
-                bounding box deltas.
-        window: (y1, x1, y2, x2) in image coordinates. The part of the image
-            that contains the image excluding the padding.
-
-    Returns detections shaped: [N, (y1, x1, y2, x2, class_id, score)]
-    """
-    # Class IDs per ROI
-    class_ids = np.argmax(probs, axis=1)
-    # Class probability of the top class of each ROI
-    class_scores = probs[np.arange(class_ids.shape[0]), class_ids]
-    # Class-specific bounding box deltas
-    deltas_specific = deltas[np.arange(deltas.shape[0]), class_ids]
-    # Apply bounding box deltas
-    # Shape: [boxes, (y1, x1, y2, x2)] in normalized coordinates
-    refined_rois = utils.apply_box_deltas(
-        rois, deltas_specific * config.BBOX_STD_DEV)
-    # Convert coordiates to image domain
-    # TODO: better to keep them normalized until later
-    height, width = config.IMAGE_SHAPE[:2]
-    refined_rois *= np.array([height, width, height, width])
-    # Clip boxes to image window
-    refined_rois = clip_to_window(window, refined_rois)
-    # Round and cast to int since we're deadling with pixels now
-    refined_rois = np.rint(refined_rois).astype(np.int32)
-
-    # TODO: Filter out boxes with zero area
-
-    # Filter out background boxes
-    keep = np.where(class_ids > 0)[0]
-    # Filter out low confidence boxes
-    if config.DETECTION_MIN_CONFIDENCE:
-        keep = np.intersect1d(
-            keep, np.where(class_scores >= config.DETECTION_MIN_CONFIDENCE)[0])
-
-    # Apply per-class NMS
-    pre_nms_class_ids = class_ids[keep]
-    pre_nms_scores = class_scores[keep]
-    pre_nms_rois = refined_rois[keep]
-    nms_keep = []
-    for class_id in np.unique(pre_nms_class_ids):
-        # Pick detections of this class
-        ixs = np.where(pre_nms_class_ids == class_id)[0]
-        # Apply NMS
-        class_keep = utils.non_max_suppression(
-            pre_nms_rois[ixs], pre_nms_scores[ixs],
-            config.DETECTION_NMS_THRESHOLD)
-        # Map indicies
-        class_keep = keep[ixs[class_keep]]
-        nms_keep = np.union1d(nms_keep, class_keep)
-    keep = np.intersect1d(keep, nms_keep).astype(np.int32)
-
-    # Keep top detections
-    roi_count = config.DETECTION_MAX_INSTANCES
-    top_ids = np.argsort(class_scores[keep])[::-1][:roi_count]
-    keep = keep[top_ids]
-
-    # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
-    # Coordinates are in image domain.
-    result = np.hstack((refined_rois[keep],
-                        class_ids[keep][..., np.newaxis],
-                        class_scores[keep][..., np.newaxis]))
-    return result
-
-
-class DetectionLayer(KE.Layer):
-    """Takes classified proposal boxes and their bounding box deltas and
+class GenerationMatchLayer(KE.Layer):
+    # TODO: Check this, probably is going to fail
+    """Takes proposal boxes with the generated captions and their bounding box deltas and
     returns the final detection boxes.
 
     Returns:
@@ -747,23 +646,25 @@ class DetectionLayer(KE.Layer):
     """
 
     def __init__(self, config=None, **kwargs):
-        super(DetectionLayer, self).__init__(**kwargs)
+        super(GenerationMatchLayer, self).__init__(**kwargs)
         self.config = config
 
     def call(self, inputs):
-        def wrapper(rois, mrcnn_class, mrcnn_bbox, image_meta):
+        def wrapper(rois, img_cap_captions, image_meta):
             detections_batch = []
-            _, _, window, _ = parse_image_meta(image_meta)
+            _, _, window = parse_image_meta(image_meta)
             for b in range(self.config.BATCH_SIZE):
-                detections = refine_detections(
-                    rois[b], mrcnn_class[b], mrcnn_bbox[b], window[b], self.config)
+                generations = np.hstack((rois[b],
+                                        img_cap_captions[b]))
+                    # refine_detections(
+                    # rois[b], mrcnn_class[b], mrcnn_bbox[b], window[b], self.config)
                 # Pad with zeros if detections < DETECTION_MAX_INSTANCES
-                gap = self.config.DETECTION_MAX_INSTANCES - detections.shape[0]
+                gap = self.config.DETECTION_MAX_INSTANCES - generations.shape[0]
                 assert gap >= 0
                 if gap > 0:
-                    detections = np.pad(
-                        detections, [(0, gap), (0, 0)], 'constant', constant_values=0)
-                detections_batch.append(detections)
+                    generations = np.pad(
+                        generations, [(0, gap), (0, 0)], 'constant', constant_values=0)
+                detections_batch.append(generations)
 
             # Stack detections and cast to float32
             # TODO: track where float64 is introduced
@@ -848,112 +749,18 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 
 
 ############################################################
-#  Feature Pyramid Network Heads
+#  LSTM text generator
 ############################################################
-
-def fpn_classifier_graph(rois, feature_maps,
-                         image_shape, pool_size, num_classes):
-    """Builds the computation graph of the feature pyramid network classifier
-    and regressor heads.
-
-    rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
-          coordinates.
-    feature_maps: List of feature maps from diffent layers of the pyramid,
-                  [P2, P3, P4, P5]. Each has a different resolution.
-    image_shape: [height, width, depth]
-    pool_size: The width of the square feature map generated from ROI Pooling.
-    num_classes: number of classes, which determines the depth of the results
-
-    Returns:
-        logits: [N, NUM_CLASSES] classifier logits (before softmax)
-        probs: [N, NUM_CLASSES] classifier probabilities
-        bbox_deltas: [N, (dy, dx, log(dh), log(dw))] Deltas to apply to
-                     proposal boxes
-    """
-    # ROI Pooling
-    # Shape: [batch, num_boxes, pool_height, pool_width, channels]
+def lstm_generator_graph(rois, feature_maps,
+                         image_shape, pool_size):
+    # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
-                        name="roi_align_classifier")([rois] + feature_maps)
-    # Two 1024 FC layers (implemented with Conv2D for consistency)
-    x = KL.TimeDistributed(KL.Conv2D(1024, (pool_size, pool_size), padding="valid"),
-                           name="mrcnn_class_conv1")(x)
-    x = KL.TimeDistributed(BatchNorm(axis=3), name='mrcnn_class_bn1')(x)
-    x = KL.Activation('relu')(x)
-    x = KL.TimeDistributed(KL.Conv2D(1024, (1, 1)),
-                           name="mrcnn_class_conv2")(x)
-    x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_class_bn2')(x)
-    x = KL.Activation('relu')(x)
-
-    shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
-                       name="pool_squeeze")(x)
-
-    # Classifier head
-    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
-                                            name='mrcnn_class_logits')(shared)
-    mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
-                                     name="mrcnn_class")(mrcnn_class_logits)
-
-    # BBox head
-    # [batch, boxes, num_classes * (dy, dx, log(dh), log(dw))]
-    x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'),
-                           name='mrcnn_bbox_fc')(shared)
-    # Reshape to [batch, boxes, num_classes, (dy, dx, log(dh), log(dw))]
-    s = K.int_shape(x)
-    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
-
-    return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
-
-
-def build_fpn_mask_graph(rois, feature_maps,
-                         image_shape, pool_size, num_classes):
-    """Builds the computation graph of the mask head of Feature Pyramid Network.
-
-    rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
-          coordinates.
-    feature_maps: List of feature maps from diffent layers of the pyramid,
-                  [P2, P3, P4, P5]. Each has a different resolution.
-    image_shape: [height, width, depth]
-    pool_size: The width of the square feature map generated from ROI Pooling.
-    num_classes: number of classes, which determines the depth of the results
-
-    Returns: Masks [batch, roi_count, height, width, num_classes]
-    """
-    # ROI Pooling
-    # Shape: [batch, boxes, pool_height, pool_width, channels]
-    x = PyramidROIAlign([pool_size, pool_size], image_shape,
-                        name="roi_align_mask")([rois] + feature_maps)
-
-    # Conv layers
-    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="mrcnn_mask_conv1")(x)
-    x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_mask_bn1')(x)
-    x = KL.Activation('relu')(x)
-
-    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="mrcnn_mask_conv2")(x)
-    x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_mask_bn2')(x)
-    x = KL.Activation('relu')(x)
-
-    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="mrcnn_mask_conv3")(x)
-    x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_mask_bn3')(x)
-    x = KL.Activation('relu')(x)
-
-    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"),
-                           name="mrcnn_mask_conv4")(x)
-    x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_mask_bn4')(x)
-    x = KL.Activation('relu')(x)
-
-    x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"),
-                           name="mrcnn_mask_deconv")(x)
-    x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"),
-                           name="mrcnn_mask")(x)
-    return x
+                        name="roi_align_generator")([rois] + feature_maps)
+    captions = np.array([[['']]] * rois.shape[0])
+    captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
+    s = K.int_shape(captions)
+    captions = KL.TimeDistributed(KL.Lambda(lambda y: y, output_shape=s), dtype=captions.dtype)(captions)
+    return captions
 
 
 ############################################################
@@ -1020,6 +827,7 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 
     # TODO: use smooth_l1_loss() rather than reimplementing here
     #       to reduce code duplication
+    # loss = smooth_l1_loss(target_bbox - rpn_bbox)
     diff = K.abs(target_bbox - rpn_bbox)
     less_than_one = K.cast(K.less(diff, 1.0), "float32")
     loss = (less_than_one * 0.5 * diff**2) + (1 - less_than_one) * (diff - 0.5)
@@ -1028,108 +836,9 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
     return loss
 
 
-def mrcnn_class_loss_graph(target_class_ids, pred_class_logits,
-                           active_class_ids):
-    """Loss for the classifier head of Mask RCNN.
-
-    target_class_ids: [batch, num_rois]. Integer class IDs. Uses zero
-        padding to fill in the array.
-    pred_class_logits: [batch, num_rois, num_classes]
-    active_class_ids: [batch, num_classes]. Has a value of 1 for
-        classes that are in the dataset of the image, and 0
-        for classes that are not in the dataset.
-    """
-    target_class_ids = tf.cast(target_class_ids, 'int64')
-
-    # Find predictions of classes that are not in the dataset.
-    pred_class_ids = tf.argmax(pred_class_logits, axis=2)
-    # TODO: Update this line to work with batch > 1. Right now it assumes all
-    #       images in a batch have the same active_class_ids
-    pred_active = tf.gather(active_class_ids[0], pred_class_ids)
-
-    # Loss
-    loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=target_class_ids, logits=pred_class_logits)
-
-    # Erase losses of predictions of classes that are not in the active
-    # classes of the image.
-    loss = loss * pred_active
-
-    # Computer loss mean. Use only predictions that contribute
-    # to the loss to get a correct mean.
-    loss = tf.reduce_sum(loss) / tf.reduce_sum(pred_active)
-    return loss
-
-
-def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
-    """Loss for Mask R-CNN bounding box refinement.
-
-    target_bbox: [batch, num_rois, (dy, dx, log(dh), log(dw))]
-    target_class_ids: [batch, num_rois]. Integer class IDs.
-    pred_bbox: [batch, num_rois, num_classes, (dy, dx, log(dh), log(dw))]
-    """
-    # Reshape to merge batch and roi dimensions for simplicity.
-    target_class_ids = K.reshape(target_class_ids, (-1,))
-    target_bbox = K.reshape(target_bbox, (-1, 4))
-    pred_bbox = K.reshape(pred_bbox, (-1, K.int_shape(pred_bbox)[2], 4))
-
-    # Only positive ROIs contribute to the loss. And only
-    # the right class_id of each ROI. Get their indicies.
-    positive_roi_ix = tf.where(target_class_ids > 0)[:, 0]
-    positive_roi_class_ids = tf.cast(
-        tf.gather(target_class_ids, positive_roi_ix), tf.int64)
-    indices = tf.stack([positive_roi_ix, positive_roi_class_ids], axis=1)
-
-    # Gather the deltas (predicted and true) that contribute to loss
-    target_bbox = tf.gather(target_bbox, positive_roi_ix)
-    pred_bbox = tf.gather_nd(pred_bbox, indices)
-
-    # Smooth-L1 Loss
-    loss = K.switch(tf.size(target_bbox) > 0,
-                    smooth_l1_loss(y_true=target_bbox, y_pred=pred_bbox),
-                    tf.constant(0.0))
-    loss = K.mean(loss)
-    loss = K.reshape(loss, [1, 1])
-    return loss
-
-
-def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
-    """Mask binary cross-entropy loss for the masks head.
-
-    target_masks: [batch, num_rois, height, width].
-        A float32 tensor of values 0 or 1. Uses zero padding to fill array.
-    target_class_ids: [batch, num_rois]. Integer class IDs. Zero padded.
-    pred_masks: [batch, proposals, height, width, num_classes] float32 tensor
-                with values from 0 to 1.
-    """
-    # Reshape for simplicity. Merge first two dimensions into one.
-    target_class_ids = K.reshape(target_class_ids, (-1,))
-    mask_shape = tf.shape(target_masks)
-    target_masks = K.reshape(target_masks, (-1, mask_shape[2], mask_shape[3]))
-    pred_shape = tf.shape(pred_masks)
-    pred_masks = K.reshape(pred_masks,
-                           (-1, pred_shape[2], pred_shape[3], pred_shape[4]))
-    # Permute predicted masks to [N, num_classes, height, width]
-    pred_masks = tf.transpose(pred_masks, [0, 3, 1, 2])
-
-    # Only positive ROIs contribute to the loss. And only
-    # the class specific mask of each ROI.
-    positive_ix = tf.where(target_class_ids > 0)[:, 0]
-    positive_class_ids = tf.cast(
-        tf.gather(target_class_ids, positive_ix), tf.int64)
-    indices = tf.stack([positive_ix, positive_class_ids], axis=1)
-
-    # Gather the masks (predicted and true) that contribute to loss
-    y_true = tf.gather(target_masks, positive_ix)
-    y_pred = tf.gather_nd(pred_masks, indices)
-
-    # Compute binary cross entropy. If no positive ROIs, then return 0.
-    # shape: [batch, roi, num_classes]
-    loss = K.switch(tf.size(y_true) > 0,
-                    K.binary_crossentropy(target=y_true, output=y_pred),
-                    tf.constant(0.0))
-    loss = K.mean(loss)
-    loss = K.reshape(loss, [1, 1])
+def imgcap_caption_loss_graph(target_captions, generated_captions):
+    # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    loss = tf.constant(0.0)
     return loss
 
 
@@ -1137,103 +846,71 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
 #  Data Generator
 ############################################################
 
-def load_image_gt(dataset, config, image_id, augment=False,
-                  use_mini_mask=False):
-    """Load and return ground truth dataset for an image (image, mask, bounding boxes).
+def load_image_gt(dataset, config, image_id, augment=False):
+    """Load and return ground truth dataset for an image (image, caption, bounding boxes).
 
     augment: If true, apply random image augmentation. Currently, only
         horizontal flipping is offered.
-    use_mini_mask: If False, returns full-size masks that are the same height
-        and width as the original image. These can be big, for example
-        1024x1024x100 (for 100 instances). Mini masks are smaller, typically,
-        224x224 and are generated by extracting the bounding box of the
-        object and resizing it to MINI_MASK_SHAPE.
 
     Returns:
     image: [height, width, 3]
     shape: the original shape of the image before resizing and cropping.
-    class_ids: [instance_count] Integer class IDs
+    captions: [instance_count] string captions
     bbox: [instance_count, (y1, x1, y2, x2)]
-    mask: [height, width, instance_count]. The height and width are those
-        of the image unless use_mini_mask is True, in which case they are
-        defined in MINI_MASK_SHAPE.
     """
     # Load image and mask
     image = dataset.load_image(image_id)
-    mask, class_ids = dataset.load_mask(image_id)
+    bboxes, captions = dataset.load_captions_and_rois(image_id)
+
     shape = image.shape
     image, window, scale, padding = utils.resize_image(
         image,
         min_dim=config.IMAGE_MIN_DIM,
         max_dim=config.IMAGE_MAX_DIM,
         padding=config.IMAGE_PADDING)
-    mask = utils.resize_mask(mask, scale, padding)
+    # mask = utils.resize_mask(mask, scale, padding)
+    # TODO: add caption lemmatization and etc. ...
 
     # Random horizontal flips.
     if augment:
         if random.randint(0, 1):
             image = np.fliplr(image)
-            mask = np.fliplr(mask)
-
-    # Bounding boxes. Note that some boxes might be all zeros
-    # if the corresponding mask got cropped out.
-    # bbox: [num_instances, (y1, x1, y2, x2)]
-    bbox = utils.extract_bboxes(mask)
-
-    # Active classes
-    # Different datasets have different classes, so track the
-    # classes supported in the dataset of this image.
-    active_class_ids = np.zeros([dataset.num_classes], dtype=np.int32)
-    source_class_ids = dataset.source_class_ids[dataset.image_info[image_id]["source"]]
-    active_class_ids[source_class_ids] = 1
-
-    # Resize masks to smaller size to reduce memory usage
-    if use_mini_mask:
-        mask = utils.minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
 
     # Image meta dataset
-    image_meta = compose_image_meta(image_id, shape, window, active_class_ids)
+    image_meta = compose_image_meta(image_id, shape, window)
 
-    return image, image_meta, class_ids, bbox, mask
+    return image, image_meta, captions, bboxes
 
 
-def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
-    """Generate targets for training Stage 2 classifier and mask heads.
+def build_text_generation_targets(rpn_rois, gt_captions, gt_boxes, config):
+    """Generate targets for training Stage 2 caption generation.
     This is not used in normal training. It's useful for debugging or to train
-    the Mask RCNN heads without using the RPN head.
+    the LSTM text generation without using the RPN head.
 
     Inputs:
     rpn_rois: [N, (y1, x1, y2, x2)] proposal boxes.
-    gt_class_ids: [instance count] Integer class IDs
+    gt_captions: [instance count] String caption
     gt_boxes: [instance count, (y1, x1, y2, x2)]
-    gt_masks: [height, width, instance count] Grund truth masks. Can be full
-              size or mini-masks.
 
     Returns:
     rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)]
-    class_ids: [TRAIN_ROIS_PER_IMAGE]. Integer class IDs.
-    bboxes: [TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (y, x, log(h), log(w))]. Class-specific
-            bbox refinments.
-    masks: [TRAIN_ROIS_PER_IMAGE, height, width, NUM_CLASSES). Class specific masks cropped
-           to bbox boundaries and resized to neural network output size.
+    captions: [TRAIN_ROIS_PER_IMAGE]. String captions.
     """
     assert rpn_rois.shape[0] > 0
-    assert gt_class_ids.dtype == np.int32, "Expected int but got {}".format(
-        gt_class_ids.dtype)
+    assert gt_captions.shape[0] != rpn_rois.shape[0]
+    assert gt_captions.dtype == np.str, "Expected str but got {}".format(
+        gt_captions.dtype)
     assert gt_boxes.dtype == np.int32, "Expected int but got {}".format(
         gt_boxes.dtype)
-    assert gt_masks.dtype == np.bool_, "Expected bool but got {}".format(
-        gt_masks.dtype)
 
     # It's common to add GT Boxes to ROIs but we don't do that here because
     # according to XinLei Chen's paper, it doesn't help.
 
-    # Trim empty padding in gt_boxes and gt_masks parts
-    instance_ids = np.where(gt_class_ids > 0)[0]
-    assert instance_ids.shape[0] > 0, "Image must contain instances."
-    gt_class_ids = gt_class_ids[instance_ids]
-    gt_boxes = gt_boxes[instance_ids]
-    gt_masks = gt_masks[:, :, instance_ids]
+    # Trim empty padding in gt_boxes
+    captions = np.where(gt_captions != '')[0]
+    assert captions.shape[0] > 0, "Image must contain captions."
+    gt_captions = gt_captions[captions]
+    gt_boxes = gt_boxes[captions]
 
     # Compute areas of ROIs and ground truth boxes.
     rpn_roi_area = (rpn_rois[:, 2] - rpn_rois[:, 0]) * \
@@ -1254,7 +931,7 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
         overlaps.shape[0]), rpn_roi_iou_argmax]
     # GT box assigned to each ROI
     rpn_roi_gt_boxes = gt_boxes[rpn_roi_iou_argmax]
-    rpn_roi_gt_class_ids = gt_class_ids[rpn_roi_iou_argmax]
+    rpn_roi_gt_captions = gt_captions[rpn_roi_iou_argmax]
 
     # Positive ROIs are those with >= 0.5 IoU with a GT box.
     fg_ids = np.where(rpn_roi_iou_max > 0.5)[0]
@@ -1305,62 +982,33 @@ def build_detection_targets(rpn_rois, gt_class_ids, gt_boxes, gt_masks, config):
 
     # Reset the gt boxes assigned to BG ROIs.
     rpn_roi_gt_boxes[keep_bg_ids, :] = 0
-    rpn_roi_gt_class_ids[keep_bg_ids] = 0
+    rpn_roi_gt_captions[keep_bg_ids] = 0
 
-    # For each kept ROI, assign a class_id, and for FG ROIs also add bbox refinement.
+    # For each kept ROI, assign a caption, and for FG ROIs also add bbox refinement.
     rois = rpn_rois[keep]
     roi_gt_boxes = rpn_roi_gt_boxes[keep]
-    roi_gt_class_ids = rpn_roi_gt_class_ids[keep]
+    roi_gt_captions = rpn_roi_gt_captions[keep]
     roi_gt_assignment = rpn_roi_iou_argmax[keep]
 
     # Class-aware bbox deltas. [y, x, log(h), log(w)]
     bboxes = np.zeros((config.TRAIN_ROIS_PER_IMAGE,
                        config.NUM_CLASSES, 4), dtype=np.float32)
-    pos_ids = np.where(roi_gt_class_ids > 0)[0]
-    bboxes[pos_ids, roi_gt_class_ids[pos_ids]] = utils.box_refinement(
+    pos_ids = np.where(roi_gt_captions != '')[0]
+    bboxes[pos_ids, roi_gt_captions[pos_ids]] = utils.box_refinement(
         rois[pos_ids], roi_gt_boxes[pos_ids, :4])
     # Normalize bbox refinments
     bboxes /= config.BBOX_STD_DEV
 
-    # Generate class-specific target masks.
-    masks = np.zeros((config.TRAIN_ROIS_PER_IMAGE, config.MASK_SHAPE[0], config.MASK_SHAPE[1], config.NUM_CLASSES),
-                     dtype=np.float32)
-    for i in pos_ids:
-        class_id = roi_gt_class_ids[i]
-        assert class_id > 0, "class id must be greater than 0"
-        gt_id = roi_gt_assignment[i]
-        class_mask = gt_masks[:, :, gt_id]
-
-        if config.USE_MINI_MASK:
-            # Create a mask placeholder, the size of the image
-            placeholder = np.zeros(config.IMAGE_SHAPE[:2], dtype=bool)
-            # GT box
-            gt_y1, gt_x1, gt_y2, gt_x2 = gt_boxes[gt_id]
-            gt_w = gt_x2 - gt_x1
-            gt_h = gt_y2 - gt_y1
-            # Resize mini mask to size of GT box
-            placeholder[gt_y1:gt_y2, gt_x1:gt_x2] = \
-                np.round(scipy.misc.imresize(class_mask.astype(float), (gt_h, gt_w),
-                                             interp='nearest') / 255.0).astype(bool)
-            # Place the mini batch in the placeholder
-            class_mask = placeholder
-
-        # Pick part of the mask and resize it
-        y1, x1, y2, x2 = rois[i].astype(np.int32)
-        m = class_mask[y1:y2, x1:x2]
-        mask = scipy.misc.imresize(
-            m.astype(float), config.MASK_SHAPE, interp='nearest') / 255.0
-        masks[i, :, :, class_id] = mask
-
-    return rois, roi_gt_class_ids, bboxes, masks
+    return rois, roi_gt_captions  # , bboxes
 
 
-def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
+def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
+    # TODO: check if there is need to change this to work with captions dataset
     """Given the anchors and GT boxes, compute overlaps and identify positive
     anchors and deltas to refine them to match their corresponding GT boxes.
 
     anchors: [num_anchors, (y1, x1, y2, x2)]
-    gt_class_ids: [num_gt_boxes] Integer class IDs.
+    gt_captions: [num_gt_boxes] string captions.
     gt_boxes: [num_gt_boxes, (y1, x1, y2, x2)]
 
     Returns:
@@ -1371,25 +1019,26 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     # RPN Match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
-    rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
+    # rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
 
-    # Handle COCO crowds
-    # A crowd box in COCO is a bounding box around several instances. Exclude
-    # them from training. A crowd box is given a negative class ID.
-    crowd_ix = np.where(gt_class_ids < 0)[0]
-    if crowd_ix.shape[0] > 0:
-        # Filter out crowds from ground truth class IDs and boxes
-        non_crowd_ix = np.where(gt_class_ids > 0)[0]
-        crowd_boxes = gt_boxes[crowd_ix]
-        gt_class_ids = gt_class_ids[non_crowd_ix]
-        gt_boxes = gt_boxes[non_crowd_ix]
-        # Compute overlaps with crowd boxes [anchors, crowds]
-        crowd_overlaps = utils.compute_overlaps(anchors, crowd_boxes)
-        crowd_iou_max = np.amax(crowd_overlaps, axis=1)
-        no_crowd_bool = (crowd_iou_max < 0.001)
-    else:
-        # All anchors don't intersect a crowd
-        no_crowd_bool = np.ones([anchors.shape[0]], dtype=bool)
+    # TODO: check if this really is unnecessary
+    # # Handle COCO crowds
+    # # A crowd box in COCO is a bounding box around several instances. Exclude
+    # # them from training. A crowd box is given a negative class ID.
+    # crowd_ix = np.where(gt_class_ids < 0)[0]
+    # if crowd_ix.shape[0] > 0:
+    #     # Filter out crowds from ground truth class IDs and boxes
+    #     non_crowd_ix = np.where(gt_class_ids > 0)[0]
+    #     crowd_boxes = gt_boxes[crowd_ix]
+    #     gt_class_ids = gt_class_ids[non_crowd_ix]
+    #     gt_boxes = gt_boxes[non_crowd_ix]
+    #     # Compute overlaps with crowd boxes [anchors, crowds]
+    #     crowd_overlaps = utils.compute_overlaps(anchors, crowd_boxes)
+    #     crowd_iou_max = np.amax(crowd_overlaps, axis=1)
+    #     no_crowd_bool = (crowd_iou_max < 0.001)
+    # else:
+    #     # All anchors don't intersect a crowd
+    #     no_crowd_bool = np.ones([anchors.shape[0]], dtype=bool)
 
     # Compute overlaps [num_anchors, num_gt_boxes]
     overlaps = utils.compute_overlaps(anchors, gt_boxes)
@@ -1406,7 +1055,7 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     # matched to them. Skip boxes in crowd areas.
     anchor_iou_argmax = np.argmax(overlaps, axis=1)
     anchor_iou_max = overlaps[np.arange(overlaps.shape[0]), anchor_iou_argmax]
-    rpn_match[(anchor_iou_max < 0.3) & (no_crowd_bool)] = -1
+    rpn_match[(anchor_iou_max < 0.3)] = -1
     # 2. Set an anchor for each GT box (regardless of IoU value).
     # TODO: If multiple anchors have the same IoU match all of them
     gt_iou_argmax = np.argmax(overlaps, axis=0)
@@ -1431,48 +1080,48 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
         ids = np.random.choice(ids, extra, replace=False)
         rpn_match[ids] = 0
 
-    # For positive anchors, compute shift and scale needed to transform them
-    # to match the corresponding GT boxes.
-    ids = np.where(rpn_match == 1)[0]
-    ix = 0  # index into rpn_bbox
-    # TODO: use box_refinment() rather than duplicating the code here
-    for i, a in zip(ids, anchors[ids]):
-        # Closest gt box (it might have IoU < 0.7)
-        gt = gt_boxes[anchor_iou_argmax[i]]
+    # # For positive anchors, compute shift and scale needed to transform them
+    # # to match the corresponding GT boxes.
+    # ids = np.where(rpn_match == 1)[0]
+    # ix = 0  # index into rpn_bbox
+    # # TODO: use box_refinment() rather than duplicating the code here
+    # for i, a in zip(ids, anchors[ids]):
+    #     # Closest gt box (it might have IoU < 0.7)
+    #     gt = gt_boxes[anchor_iou_argmax[i]]
+    #
+    #     # Convert coordinates to center plus width/height.
+    #     # GT Box
+    #     gt_h = gt[2] - gt[0]
+    #     gt_w = gt[3] - gt[1]
+    #     gt_center_y = gt[0] + 0.5 * gt_h
+    #     gt_center_x = gt[1] + 0.5 * gt_w
+    #     # Anchor
+    #     a_h = a[2] - a[0]
+    #     a_w = a[3] - a[1]
+    #     a_center_y = a[0] + 0.5 * a_h
+    #     a_center_x = a[1] + 0.5 * a_w
+    #
+    #     # Compute the bbox refinement that the RPN should predict.
+    #     rpn_bbox[ix] = [
+    #         (gt_center_y - a_center_y) / a_h,
+    #         (gt_center_x - a_center_x) / a_w,
+    #         np.log(gt_h / a_h),
+    #         np.log(gt_w / a_w),
+    #     ]
+    #     # Normalize
+    #     rpn_bbox[ix] /= config.RPN_BBOX_STD_DEV
+    #     ix += 1
 
-        # Convert coordinates to center plus width/height.
-        # GT Box
-        gt_h = gt[2] - gt[0]
-        gt_w = gt[3] - gt[1]
-        gt_center_y = gt[0] + 0.5 * gt_h
-        gt_center_x = gt[1] + 0.5 * gt_w
-        # Anchor
-        a_h = a[2] - a[0]
-        a_w = a[3] - a[1]
-        a_center_y = a[0] + 0.5 * a_h
-        a_center_x = a[1] + 0.5 * a_w
-
-        # Compute the bbox refinement that the RPN should predict.
-        rpn_bbox[ix] = [
-            (gt_center_y - a_center_y) / a_h,
-            (gt_center_x - a_center_x) / a_w,
-            np.log(gt_h / a_h),
-            np.log(gt_w / a_w),
-        ]
-        # Normalize
-        rpn_bbox[ix] /= config.RPN_BBOX_STD_DEV
-        ix += 1
-
-    return rpn_match, rpn_bbox
+    return rpn_match  # , rpn_bbox
 
 
-def generate_random_rois(image_shape, count, gt_class_ids, gt_boxes):
+def generate_random_rois(image_shape, count, gt_captions, gt_boxes):
     """Generates ROI proposals similar to what a region proposal network
     would generate.
 
     image_shape: [Height, Width, Depth]
     count: Number of ROIs to generate
-    gt_class_ids: [N] Integer ground truth class IDs
+    gt_captions: [N] String captions
     gt_boxes: [N, (y1, x1, y2, x2)] Ground truth boxes in pixels.
 
     Returns: [count, (y1, x1, y2, x2)] ROI boxes in pixels.
@@ -1559,22 +1208,18 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
         in training detection targets are generated by DetectionTargetLayer.
 
     Returns a Python generator. Upon calling next() on it, the
-    generator returns two lists, inputs and outputs. The containtes
+    generator returns two lists, inputs and outputs. The contents
     of the lists differs depending on the received arguments:
     inputs list:
     - images: [batch, H, W, C]
     - image_meta: [batch, size of image meta]
     - rpn_match: [batch, N] Integer (1=positive anchor, -1=negative, 0=neutral)
     - rpn_bbox: [batch, N, (dy, dx, log(dh), log(dw))] Anchor bbox deltas.
-    - gt_class_ids: [batch, MAX_GT_INSTANCES] Integer class IDs
+    - gt_class_ids: [batch, MAX_GT_INSTANCES] string captions
     - gt_boxes: [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)]
-    - gt_masks: [batch, height, width, MAX_GT_INSTANCES]. The height and width
-                are those of the image unless use_mini_mask is True, in which
-                case they are defined in MINI_MASK_SHAPE.
 
     outputs list: Usually empty in regular training. But if detection_targets
-        is True then the outputs list contains target class_ids, bbox deltas,
-        and masks.
+        is True then the outputs list contains target captions.
     """
     b = 0  # batch item index
     image_index = -1
@@ -1599,28 +1244,20 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
 
             # Get GT bounding boxes and masks for image.
             image_id = image_ids[image_index]
-            image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
-                load_image_gt(dataset, config, image_id, augment=augment,
-                              use_mini_mask=config.USE_MINI_MASK)
-
-            # Skip images that have no instances. This can happen in cases
-            # where we train on a subset of classes and the image doesn't
-            # have any of the classes we care about.
-            if not np.any(gt_class_ids > 0):
-                continue
+            image, image_meta, gt_captions, gt_boxes = \
+                load_image_gt(dataset, config, image_id, augment=augment)
 
             # RPN Targets
-            rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors,
-                                                    gt_class_ids, gt_boxes, config)
+            rpn_match = build_rpn_targets(image.shape, anchors,
+                                          gt_captions, gt_boxes, config)
 
-            # Mask R-CNN Targets
+            # Image Caption R-CNN Targets
             if random_rois:
                 rpn_rois = generate_random_rois(
-                    image.shape, random_rois, gt_class_ids, gt_boxes)
+                    image.shape, random_rois, gt_captions, gt_boxes)
                 if detection_targets:
-                    rois, mrcnn_class_ids, mrcnn_bbox, mrcnn_mask =\
-                        build_detection_targets(
-                            rpn_rois, gt_class_ids, gt_boxes, gt_masks, config)
+                    rois, captions = \
+                        build_text_generation_targets(rpn_rois, gt_captions, gt_boxes, config)
 
             # Init batch arrays
             if b == 0:
@@ -1628,62 +1265,45 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                     (batch_size,) + image_meta.shape, dtype=image_meta.dtype)
                 batch_rpn_match = np.zeros(
                     [batch_size, anchors.shape[0], 1], dtype=rpn_match.dtype)
-                batch_rpn_bbox = np.zeros(
-                    [batch_size, config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4], dtype=rpn_bbox.dtype)
                 batch_images = np.zeros(
                     (batch_size,) + image.shape, dtype=np.float32)
-                batch_gt_class_ids = np.zeros(
-                    (batch_size, config.MAX_GT_INSTANCES), dtype=np.int32)
+                batch_gt_captions = np.zeros(
+                    (batch_size, config.MAX_GT_INSTANCES), dtype=gt_captions.dtype)
                 batch_gt_boxes = np.zeros(
-                    (batch_size, config.MAX_GT_INSTANCES, 4), dtype=np.int32)
-                if config.USE_MINI_MASK:
-                    batch_gt_masks = np.zeros((batch_size, config.MINI_MASK_SHAPE[0], config.MINI_MASK_SHAPE[1],
-                                               config.MAX_GT_INSTANCES))
-                else:
-                    batch_gt_masks = np.zeros(
-                        (batch_size, image.shape[0], image.shape[1], config.MAX_GT_INSTANCES))
+                    (batch_size, config.MAX_GT_INSTANCES, 4), dtype=gt_boxes.dtype)
                 if random_rois:
                     batch_rpn_rois = np.zeros(
                         (batch_size, rpn_rois.shape[0], 4), dtype=rpn_rois.dtype)
                     if detection_targets:
                         batch_rois = np.zeros(
                             (batch_size,) + rois.shape, dtype=rois.dtype)
-                        batch_mrcnn_class_ids = np.zeros(
-                            (batch_size,) + mrcnn_class_ids.shape, dtype=mrcnn_class_ids.dtype)
-                        batch_mrcnn_bbox = np.zeros(
-                            (batch_size,) + mrcnn_bbox.shape, dtype=mrcnn_bbox.dtype)
-                        batch_mrcnn_mask = np.zeros(
-                            (batch_size,) + mrcnn_mask.shape, dtype=mrcnn_mask.dtype)
+                        batch_captions = np.zeros(
+                            (batch_size,) + captions.shape, dtype=captions.dtype)
 
             # If more instances than fits in the array, sub-sample from them.
             if gt_boxes.shape[0] > config.MAX_GT_INSTANCES:
-                ids = np.random.choice(
+                captions = np.random.choice(
                     np.arange(gt_boxes.shape[0]), config.MAX_GT_INSTANCES, replace=False)
-                gt_class_ids = gt_class_ids[ids]
-                gt_boxes = gt_boxes[ids]
-                gt_masks = gt_masks[:, :, ids]
+                gt_captions = gt_captions[captions]
+                gt_boxes = gt_boxes[captions]
 
             # Add to batch
             batch_image_meta[b] = image_meta
             batch_rpn_match[b] = rpn_match[:, np.newaxis]
-            batch_rpn_bbox[b] = rpn_bbox
             batch_images[b] = mold_image(image.astype(np.float32), config)
-            batch_gt_class_ids[b, :gt_class_ids.shape[0]] = gt_class_ids
+            batch_gt_captions[b, :gt_captions.shape[0]] = gt_captions
             batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
-            batch_gt_masks[b, :, :, :gt_masks.shape[-1]] = gt_masks
             if random_rois:
                 batch_rpn_rois[b] = rpn_rois
                 if detection_targets:
                     batch_rois[b] = rois
-                    batch_mrcnn_class_ids[b] = mrcnn_class_ids
-                    batch_mrcnn_bbox[b] = mrcnn_bbox
-                    batch_mrcnn_mask[b] = mrcnn_mask
+                    batch_captions[b] = captions
             b += 1
 
             # Batch full?
             if b >= batch_size:
-                inputs = [batch_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox,
-                          batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
+                inputs = [batch_images, batch_image_meta, batch_rpn_match,
+                          batch_gt_captions, batch_gt_boxes]
                 outputs = []
 
                 if random_rois:
@@ -1691,10 +1311,10 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                     if detection_targets:
                         inputs.extend([batch_rois])
                         # Keras requires that output and targets have the same number of dimensions
-                        batch_mrcnn_class_ids = np.expand_dims(
-                            batch_mrcnn_class_ids, -1)
+                        batch_img_cap_captions = np.expand_dims(
+                            batch_captions, -1)
                         outputs.extend(
-                            [batch_mrcnn_class_ids, batch_mrcnn_bbox, batch_mrcnn_mask])
+                            [batch_captions])
 
                 yield inputs, outputs
 
@@ -1712,11 +1332,11 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
 
 
 ############################################################
-#  MaskRCNN Class
+#  DenseImageCapRCNN Class
 ############################################################
 
-class MaskRCNN:
-    """Encapsulates the Mask RCNN model functionality.
+class DenseImageCapRCNN:
+    """Encapsulates the Dense Image Captioning model functionality.
 
     The actual Keras model is in the keras_model property.
     """
@@ -1735,7 +1355,7 @@ class MaskRCNN:
         self.keras_model = self.build(mode=mode, config=config)
 
     def build(self, mode, config):
-        """Build Mask R-CNN architecture.
+        """Build Image Captioning R-CNN architecture.
             mode: Either "training" or "inference". The inputs and
                 outputs of the model differ accordingly.
             config: config object containing the shape of the
@@ -1747,7 +1367,7 @@ class MaskRCNN:
         h, w = config.IMAGE_SHAPE[:2]
         if h / 2**6 != int(h / 2**6) or w / 2**6 != int(w / 2**6):
             raise Exception("Image size must be dividable by 2 at least 6 times "
-                            "to avoid fractions when downscaling and upscaling."
+                            "to avoid fractions when downscaling and up-scaling."
                             "For example, use 256, 320, 384, 448, 512, ... etc. ")
 
         # Inputs
@@ -1761,29 +1381,18 @@ class MaskRCNN:
             input_rpn_bbox = KL.Input(
                 shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
 
-            # Detection GT (class IDs, bounding boxes, and masks)
-            # 1. GT Class IDs (zero padded)
-            input_gt_class_ids = KL.Input(
-                shape=[None], name="input_gt_class_ids", dtype=tf.int32)
+            # Generation GT (class IDs, bounding boxes, and masks)
+            # GT Captions
+            input_gt_captions = KL.Input(
+                shape=[None], name="input_gt_captions", dtype=tf.string)
             # 2. GT Boxes in pixels (zero padded)
             # [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in image coordinates
             input_gt_boxes = KL.Input(
                 shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
-            # Normalize coordinates
+            # # Normalize coordinates
             h, w = K.shape(input_image)[1], K.shape(input_image)[2]
             image_scale = K.cast(K.stack([h, w, h, w], axis=0), tf.float32)
             gt_boxes = KL.Lambda(lambda x: x / image_scale)(input_gt_boxes)
-            # 3. GT Masks (zero padded)
-            # [batch, height, width, MAX_GT_INSTANCES]
-            if config.USE_MINI_MASK:
-                input_gt_masks = KL.Input(
-                    shape=[config.MINI_MASK_SHAPE[0],
-                           config.MINI_MASK_SHAPE[1], None],
-                    name="input_gt_masks", dtype=bool)
-            else:
-                input_gt_masks = KL.Input(
-                    shape=[config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1], None],
-                    name="input_gt_masks", dtype=bool)
 
         # Build the shared convolution layers.
         # Bottom-up Layers
@@ -1791,7 +1400,6 @@ class MaskRCNN:
         # Don't create the thead (stage 5), so we pick the 4th item in the list.
         _, C2, C3, C4, C5 = resnet_graph(input_image, "resnet101", stage5=True)
         # Top-down Layers
-        # TODO: add assert to verify feature map sizes match what's in config
         P5 = KL.Conv2D(256, (1, 1), name='fpn_c5p5')(C5)
         P4 = KL.Add(name="fpn_p4add")([
             KL.UpSampling2D(size=(2, 2), name="fpn_p5upsampled")(P5),
@@ -1813,7 +1421,7 @@ class MaskRCNN:
 
         # Note that P6 is used in RPN, but not in the classifier heads.
         rpn_feature_maps = [P2, P3, P4, P5, P6]
-        mrcnn_feature_maps = [P2, P3, P4, P5]
+        img_cap_feature_maps = [P2, P3, P4, P5]
 
         # Generate Anchors
         self.anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,
@@ -1852,10 +1460,10 @@ class MaskRCNN:
                                  config=config)([rpn_class, rpn_bbox])
 
         if mode == "training":
-            # Class ID mask to mark class IDs supported by the dataset the image
-            # came from.
-            _, _, _, active_class_ids = KL.Lambda(lambda x: parse_image_meta_graph(x),
-                                                  mask=[None, None, None, None])(input_image_meta)
+            # # Class ID mask to mark class IDs supported by the dataset the image
+            # # came from.
+            # _, _, _, active_class_ids = KL.Lambda(lambda x: parse_image_meta_graph(x),
+            #                                       mask=[None, None, None, None])(input_image_meta)
 
             if not config.USE_RPN_ROIS:
                 # Ignore predicted ROIs and use ROIs provided as an input.
@@ -1869,22 +1477,17 @@ class MaskRCNN:
 
             # Generate detection targets
             # Subsamples proposals and generates target outputs for training
-            # Note that proposal class IDs, gt_boxes, and gt_masks are zero
-            # padded. Equally, returned rois and targets are zero padded.
-            rois, target_class_ids, target_bbox, target_mask =\
+            # Note that proposal captions, and gt_boxes, are zero padded.
+            # Equally, returned rois and targets are zero padded.
+            rois, target_captions, target_bbox =\
                 DetectionTargetLayer(config, name="proposal_targets")([
-                    target_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
+                    target_rois, input_gt_captions, gt_boxes])
 
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
-            mrcnn_class_logits, mrcnn_class, mrcnn_bbox =\
-                fpn_classifier_graph(rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
-                                     config.POOL_SIZE, config.NUM_CLASSES)
-
-            mrcnn_mask = build_fpn_mask_graph(rois, mrcnn_feature_maps,
-                                              config.IMAGE_SHAPE,
-                                              config.MASK_POOL_SIZE,
-                                              config.NUM_CLASSES)
+            img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
+                                                    config.IMAGE_SHAPE,
+                                                    config.POOL_SIZE)
 
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
@@ -1894,52 +1497,36 @@ class MaskRCNN:
                 [input_rpn_match, rpn_class_logits])
             rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
                 [input_rpn_bbox, input_rpn_match, rpn_bbox])
-            class_loss = KL.Lambda(lambda x: mrcnn_class_loss_graph(*x), name="mrcnn_class_loss")(
-                [target_class_ids, mrcnn_class_logits, active_class_ids])
-            bbox_loss = KL.Lambda(lambda x: mrcnn_bbox_loss_graph(*x), name="mrcnn_bbox_loss")(
-                [target_bbox, target_class_ids, mrcnn_bbox])
-            mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")(
-                [target_mask, target_class_ids, mrcnn_mask])
+            imgcap_loss = KL.Lambda(lambda x: imgcap_caption_loss_graph(*x), name="imgcap_caption_loss")(
+                [target_captions, img_cap_captions])
 
             # Model
             inputs = [input_image, input_image_meta,
-                      input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks]
+                      input_rpn_match, input_rpn_bbox, input_gt_captions, input_gt_boxes]
             if not config.USE_RPN_ROIS:
                 inputs.append(input_rois)
+
             outputs = [rpn_class_logits, rpn_class, rpn_bbox,
-                       mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask,
+                       img_cap_captions,
                        rpn_rois, output_rois,
-                       rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss]
-            model = KM.Model(inputs, outputs, name='mask_rcnn')
+                       rpn_class_loss, rpn_bbox_loss, imgcap_loss]
+            model = KM.Model(inputs, outputs, name='dense_image_cap_rcnn')
         else:
             # Network Heads
-            # Proposal classifier and BBox regressor heads
-            mrcnn_class_logits, mrcnn_class, mrcnn_bbox =\
-                fpn_classifier_graph(rpn_rois, mrcnn_feature_maps, config.IMAGE_SHAPE,
-                                     config.POOL_SIZE, config.NUM_CLASSES)
+            # Caption text generator
+            img_cap_captions = lstm_generator_graph(rpn_rois, img_cap_feature_maps,
+                                                    config.IMAGE_SHAPE,
+                                                    config.POOL_SIZE)
 
-            # Detections
-            # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
-            detections = DetectionLayer(config, name="mrcnn_detection")(
-                [rpn_rois, mrcnn_class, mrcnn_bbox, input_image_meta])
-
-            # Convert boxes to normalized coordinates
-            # TODO: let DetectionLayer return normalized coordinates to avoid
-            #       unnecessary conversions
-            h, w = config.IMAGE_SHAPE[:2]
-            detection_boxes = KL.Lambda(
-                lambda x: x[..., :4] / np.array([h, w, h, w]))(detections)
-
-            # Create masks for detections
-            mrcnn_mask = build_fpn_mask_graph(detection_boxes, mrcnn_feature_maps,
-                                              config.IMAGE_SHAPE,
-                                              config.MASK_POOL_SIZE,
-                                              config.NUM_CLASSES)
+            # Generations
+            # output is [batch, num_generations, (y1, x1, y2, x2, caption)] in image coordinates
+            generations = GenerationMatchLayer(config, name="mrcnn_detection")(
+                [rpn_rois, img_cap_captions, input_image_meta])
 
             model = KM.Model([input_image, input_image_meta],
-                             [detections, mrcnn_class, mrcnn_bbox,
-                                 mrcnn_mask, rpn_rois, rpn_class, rpn_bbox],
-                             name='mask_rcnn')
+                             [generations, img_cap_captions,
+                              rpn_rois, rpn_class, rpn_bbox],
+                             name='rcnn_imgcap')
 
         # Add multi-GPU support.
         if config.GPU_COUNT > 1:
@@ -1966,7 +1553,7 @@ class MaskRCNN:
         dir_name = os.path.join(self.model_dir, dir_names[-1])
         # Find the last checkpoint
         checkpoints = next(os.walk(dir_name))[2]
-        checkpoints = filter(lambda f: f.startswith("mask_rcnn"), checkpoints)
+        checkpoints = filter(lambda f: f.startswith("img_cap"), checkpoints)
         checkpoints = sorted(checkpoints)
         if not checkpoints:
             return dir_name, None
@@ -1974,10 +1561,10 @@ class MaskRCNN:
         return dir_name, checkpoint
 
     def load_weights(self, filepath, by_name=False, exclude=None):
-        """Modified version of the correspoding Keras function with
+        """Modified version of the corresponding Keras function with
         the addition of multi-GPU support and the ability to exclude
         some layers from loading.
-        exlude: list of layer names to exclude
+        exclude: list of layer names to exclude
         """
         import h5py
         from keras.engine import topology
@@ -2011,46 +1598,25 @@ class MaskRCNN:
         # Update the log directory
         self.set_log_dir(filepath)
 
-    def get_imagenet_weights(self):
-        """Downloads ImageNet trained weights from Keras.
-        Returns path to weights file.
-        """
-        from keras.utils.data_utils import get_file
-        TF_WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/'\
-                                 'releases/download/v0.2/'\
-                                 'resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5'
-        weights_path = get_file('resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5',
-                                TF_WEIGHTS_PATH_NO_TOP,
-                                cache_subdir='models',
-                                md5_hash='a268eb855778b3df3c7506639542a6af')
-        return weights_path
-
-    def compile(self, learning_rate, momentum):
+    def compile(self, learning_rate):
+        #TODO: change this part
         """Gets the model ready for training. Adds losses, regularization, and
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        optimizer = keras.optimizers.SGD(lr=learning_rate, momentum=momentum,
-                                         clipnorm=5.0)
+        optimizer = keras.optimizers.Adam(lr=learning_rate, amsgrad=True)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
         self.keras_model._per_input_losses = {}
         loss_names = ["rpn_class_loss", "rpn_bbox_loss",
-                      "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
+                      "imgcap_loss"]
         for name in loss_names:
             layer = self.keras_model.get_layer(name)
             if layer.output in self.keras_model.losses:
                 continue
             self.keras_model.add_loss(
                 tf.reduce_mean(layer.output, keep_dims=True))
-
-        # Add L2 Regularization
-        # Skip gamma and beta weights of batch normalization layers.
-        reg_losses = [keras.regularizers.l2(self.config.WEIGHT_DECAY)(w) / tf.cast(tf.size(w), tf.float32)
-                      for w in self.keras_model.trainable_weights
-                      if 'gamma' not in w.name and 'beta' not in w.name]
-        self.keras_model.add_loss(tf.add_n(reg_losses))
 
         # Compile
         self.keras_model.compile(optimizer=optimizer, loss=[
@@ -2119,7 +1685,7 @@ class MaskRCNN:
             # Continue from we left of. Get epoch and date from the file name
             # A sample model path might look like:
             # /path/to/logs/coco20171029T2315/mask_rcnn_coco_0001.h5
-            regex = r".*/\w+(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/mask\_rcnn\_\w+(\d{4})\.h5"
+            regex = r".*/\w+(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/img\_cap\_\w+(\d{4})\.h5"
             m = re.match(regex, model_path)
             if m:
                 now = datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)),
@@ -2141,13 +1707,13 @@ class MaskRCNN:
         train_dataset, val_dataset: Training and validation Dataset objects.
         learning_rate: The learning rate to train with
         epochs: Number of training epochs. Note that previous training epochs
-                are considered to be done alreay, so this actually determines
-                the epochs to train in total rather than in this particaular
+                are considered to be done already, so this actually determines
+                the epochs to train in total rather than in this particular
                 call.
-        layers: Allows selecting wich layers to train. It can be:
+        layers: Allows selecting which layers to train. It can be:
             - A regular expression to match layer names to train
             - One of these predefined values:
-              heaads: The RPN, classifier and mask heads of the network
+              no_backbone: The RPN and LSTM
               all: All the layers
               3+: Train Resnet stage 3 and up
               4+: Train Resnet stage 4 and up
@@ -2157,8 +1723,9 @@ class MaskRCNN:
 
         # Pre-defined layer regular expressions
         layer_regex = {
+            # TODO: change this to remove fpn and add name for the lstm layers
             # all layers but the backbone
-            "heads": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "no_backbone": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             # From a specific Resnet stage and up
             "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
@@ -2210,15 +1777,16 @@ class MaskRCNN:
             workers=workers,
             use_multiprocessing=True,
         )
+
         self.epoch = max(self.epoch, epochs)
 
     def mold_inputs(self, images):
         """Takes a list of images and modifies them to the format expected
         as an input to the neural network.
-        images: List of image matricies [height,width,depth]. Images can have
+        images: List of image matrices [height,width,depth]. Images can have
             different sizes.
 
-        Returns 3 Numpy matricies:
+        Returns 3 Numpy matrices:
         molded_images: [N, h, w, 3]. Images resized and normalized.
         image_metas: [N, length of meta dataset]. Details about each image.
         windows: [N, (y1, x1, y2, x2)]. The portion of the image that has the
@@ -2250,33 +1818,28 @@ class MaskRCNN:
         windows = np.stack(windows)
         return molded_images, image_metas, windows
 
-    def unmold_detections(self, detections, mrcnn_mask, image_shape, window):
+    def unmold_generations(self, generations, image_shape, window):
         """Reformats the detections of one image from the format of the neural
         network output to a format suitable for use in the rest of the
         application.
 
-        detections: [N, (y1, x1, y2, x2, class_id, score)]
-        mrcnn_mask: [N, height, width, num_classes]
+        generations: [N, (y1, x1, y2, x2, caption)]
         image_shape: [height, width, depth] Original size of the image before resizing
         window: [y1, x1, y2, x2] Box in the image where the real image is
                 excluding the padding.
 
         Returns:
         boxes: [N, (y1, x1, y2, x2)] Bounding boxes in pixels
-        class_ids: [N] Integer class IDs for each bounding box
-        scores: [N] Float probability scores of the class_id
-        masks: [height, width, num_instances] Instance masks
+        captions: [N] string caption for each bounding box
         """
         # How many detections do we have?
-        # Detections array is padded with zeros. Find the first class_id == 0.
-        zero_ix = np.where(detections[:, 4] == 0)[0]
-        N = zero_ix[0] if zero_ix.shape[0] > 0 else detections.shape[0]
+        # Detections array is padded with zeros. Find the first caption == ''.
+        zero_ix = np.where(generations[:, 4] == '')[0]
+        n = zero_ix[0] if zero_ix.shape[0] > 0 else generations.shape[0]
 
-        # Extract boxes, class_ids, scores, and class-specific masks
-        boxes = detections[:N, :4]
-        class_ids = detections[:N, 4].astype(np.int32)
-        scores = detections[:N, 5]
-        masks = mrcnn_mask[np.arange(N), :, :, class_ids]
+        # Extract boxes, and image captions
+        boxes = generations[:n, :4]
+        image_captions = generations[:n, 4].astype(np.str)
 
         # Compute scale and shift to translate coordinates to image domain.
         h_scale = image_shape[0] / (window[2] - window[0])
@@ -2289,38 +1852,24 @@ class MaskRCNN:
         # Translate bounding boxes to image domain
         boxes = np.multiply(boxes - shifts, scales).astype(np.int32)
 
-        # Filter out detections with zero area. Often only happens in early
+        # Filter out generations with zero area. Often only happens in early
         # stages of training when the network weights are still a bit random.
         exclude_ix = np.where(
             (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0)[0]
         if exclude_ix.shape[0] > 0:
             boxes = np.delete(boxes, exclude_ix, axis=0)
-            class_ids = np.delete(class_ids, exclude_ix, axis=0)
-            scores = np.delete(scores, exclude_ix, axis=0)
-            masks = np.delete(masks, exclude_ix, axis=0)
-            N = class_ids.shape[0]
+            image_captions = np.delete(image_captions, exclude_ix, axis=0)
 
-        # Resize masks to original image size and set boundary threshold.
-        full_masks = []
-        for i in range(N):
-            # Convert neural network mask to full size mask
-            full_mask = utils.unmold_mask(masks[i], boxes[i], image_shape)
-            full_masks.append(full_mask)
-        full_masks = np.stack(full_masks, axis=-1)\
-            if full_masks else np.empty((0,) + masks.shape[1:3])
+        return boxes, image_captions
 
-        return boxes, class_ids, scores, full_masks
-
-    def detect(self, images, verbose=0):
-        """Runs the detection pipeline.
+    def generate_caption(self, images, verbose=0):
+        """Runs the caption generation pipeline.
 
         images: List of images, potentially of different sizes.
 
         Returns a list of dicts, one dict per image. The dict contains:
         rois: [N, (y1, x1, y2, x2)] detection bounding boxes
-        class_ids: [N] int class IDs
-        scores: [N] float probability scores for the class IDs
-        masks: [H, W, N] instance binary masks
+        captions: [N] string image captions
         """
         assert self.mode == "inference", "Create model in inference mode."
         assert len(
@@ -2335,21 +1884,19 @@ class MaskRCNN:
         if verbose:
             log("molded_images", molded_images)
             log("image_metas", image_metas)
-        # Run object detection
-        detections, mrcnn_class, mrcnn_bbox, mrcnn_mask, \
-            rois, rpn_class, rpn_bbox =\
+        # Run caption generation
+        generations, img_cap_captions, \
+            rpn_rois, rpn_class, rpn_bbox = \
             self.keras_model.predict([molded_images, image_metas], verbose=0)
         # Process detections
         results = []
         for i, image in enumerate(images):
-            final_rois, final_class_ids, final_scores, final_masks =\
-                self.unmold_detections(detections[i], mrcnn_mask[i],
-                                       image.shape, windows[i])
+            final_rois, final_captions = self.unmold_generations(generations[i],
+                                                                 image.shape,
+                                                                 windows[i])
             results.append({
                 "rois": final_rois,
-                "class_ids": final_class_ids,
-                "scores": final_scores,
-                "masks": final_masks,
+                "captions": final_captions
             })
         return results
 
@@ -2394,12 +1941,12 @@ class MaskRCNN:
         """Returns a list of layers that have weights."""
         layers = []
         # Loop through all layers
-        for l in self.keras_model.layers:
+        for layer in self.keras_model.layers:
             # If layer is a wrapper, find inner trainable layer
-            l = self.find_trainable_layer(l)
+            layer = self.find_trainable_layer(layer)
             # Include layer if it has weights
-            if l.get_weights():
-                layers.append(l)
+            if layer.get_weights():
+                layers.append(layer)
         return layers
 
     def run_graph(self, images, outputs):
@@ -2456,23 +2003,19 @@ class MaskRCNN:
 #  Data Formatting
 ############################################################
 
-def compose_image_meta(image_id, image_shape, window, active_class_ids):
+def compose_image_meta(image_id, image_shape, window):
     """Takes attributes of an image and puts them in one 1D array. Use
     parse_image_meta() to parse the values back.
 
     image_id: An int ID of the image. Useful for debugging.
     image_shape: [height, width, channels]
     window: (y1, x1, y2, x2) in pixels. The area of the image where the real
-            image is (excluding the padding)
-    active_class_ids: List of class_ids available in the dataset from which
-        the image came. Useful if training on images from multiple datasets
-        where not all classes are present in all datasets.
+            image is (excluding the padding).
     """
     meta = np.array(
         [image_id] +            # size=1
         list(image_shape) +     # size=3
-        list(window) +          # size=4 (y1, x1, y2, x2) in image cooredinates
-        list(active_class_ids)  # size=num_classes
+        list(window)            # size=4 (y1, x1, y2, x2) in image coordinates
     )
     return meta
 
@@ -2485,8 +2028,7 @@ def parse_image_meta(meta):
     image_id = meta[:, 0]
     image_shape = meta[:, 1:4]
     window = meta[:, 4:8]   # (y1, x1, y2, x2) window of image in in pixels
-    active_class_ids = meta[:, 8:]
-    return image_id, image_shape, window, active_class_ids
+    return image_id, image_shape, window
 
 
 def parse_image_meta_graph(meta):
@@ -2498,12 +2040,11 @@ def parse_image_meta_graph(meta):
     image_id = meta[:, 0]
     image_shape = meta[:, 1:4]
     window = meta[:, 4:8]
-    active_class_ids = meta[:, 8:]
-    return [image_id, image_shape, window, active_class_ids]
+    return [image_id, image_shape, window]
 
 
 def mold_image(images, config):
-    """Takes RGB images with 0-255 values and subtraces
+    """Takes RGB images with 0-255 values and subtracts
     the mean pixel and converts it to float. Expects image
     colors in RGB order.
     """
@@ -2520,7 +2061,7 @@ def unmold_image(normalized_images, config):
 ############################################################
 
 def trim_zeros_graph(boxes, name=None):
-    """Often boxes are represented with matricies of shape [N, 4] and
+    """Often boxes are represented with matrices of shape [N, 4] and
     are padded with zeros. This removes zero boxes.
 
     boxes: [N, 4] matrix of boxes.

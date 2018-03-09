@@ -153,7 +153,6 @@ fabric.properties
 
 
 # Large files
-objects.json
-object_labels.txt
+dataset/**/*
 mask_rcnn_coco.h5
 rcnn_coco.h5

@@ -39,7 +39,7 @@ def load_trained_model():
 
 
 def change_and_save_model(model):
-    for i in range(32):
+    for i in range(42):
         model.keras_model.layers.pop()
 
     print(model.keras_model.summary())
