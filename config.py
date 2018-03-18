@@ -144,6 +144,10 @@ class Config(object):
     # train the RPN.
     USE_RPN_ROIS = True
 
+    # Embedding size
+    EMBEDDING_SIZE = 100
+
+
     def __init__(self):
         """Set values of computed attributes."""
         # Effective batch size

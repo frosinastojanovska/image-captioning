@@ -7,6 +7,8 @@ import skimage.color as skimage_color
 from config import Config
 import utils
 import dense_model as modellib
+from preprocess import encode_caption, load_embeddings
+import numpy as np
 
 
 class DenseCapConfig(Config):
@@ -30,7 +32,7 @@ class DenseCapConfig(Config):
 
 
 class VisualGenomeDataset(utils.Dataset):
-    def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
+    def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file, embeddings):
         with open(data_file, 'r', encoding='utf-8') as doc:
             data = json.loads(doc.read())
 
@@ -39,13 +41,17 @@ class VisualGenomeDataset(utils.Dataset):
 
         # Add images
         for i in image_ids:
+            captions = [[d['phrase']] for d in data[i - 1]['regions']]
+            caps = []
+            for caption in captions:
+                caps.append(self.encode_region_caption(caption[0], embeddings))
             self.add_image(
                 "VisualGenome", image_id=i,
                 path=os.path.join(data_dir, '{}.jpg'.format(i)),
                 width=image_meta[i-1]['width'],
                 height=image_meta[i-1]['height'],
                 rois=[[d['x'], d['y'], d['width'], d['height']] for d in data[i-1]['regions']],
-                captions=[[d['phrase']] for d in data[i-1]['regions']]
+                captions=caps
             )
 
     def image_reference(self, image_id):
@@ -69,7 +75,11 @@ class VisualGenomeDataset(utils.Dataset):
         image_info = self.image_info[image_id]
         rois = image_info['rois']
         captions = image_info['captions']
-        return rois, captions
+        return np.array(rois), np.array(captions)
+
+    def encode_region_caption(self, caption, embeddings):
+        """ Convert caption to word embedding vector """
+        return encode_caption(caption, embeddings)
 
 
 if __name__ == '__main__':
@@ -96,14 +106,17 @@ if __name__ == '__main__':
     val_image_ids = [62, 65]  # image_ids_list[5:6]
     test_image_ids = image_ids_list[6:8]
 
+    # load word embeddings
+    word_embeddings = load_embeddings('dataset/glove.6B.100d.txt')
+
     # Training dataset
     dataset_train = VisualGenomeDataset()
-    dataset_train.load_visual_genome(data_directory, train_image_ids, image_meta_file_path, data_file_path)
+    dataset_train.load_visual_genome(data_directory, train_image_ids, image_meta_file_path, data_file_path, word_embeddings)
     dataset_train.prepare()
 
     # Validation dataset
     dataset_val = VisualGenomeDataset()
-    dataset_val.load_visual_genome(data_directory, val_image_ids, image_meta_file_path, data_file_path)
+    dataset_val.load_visual_genome(data_directory, val_image_ids, image_meta_file_path, data_file_path, word_embeddings)
     dataset_val.prepare()
 
     init_with = 'coco'

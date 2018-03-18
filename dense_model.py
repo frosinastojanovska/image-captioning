@@ -752,15 +752,27 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  LSTM text generator
 ############################################################
 def lstm_generator_graph(rois, feature_maps,
-                         image_shape, pool_size):
+                         image_shape, pool_size, embedding_size):
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
                         name="roi_align_generator")([rois] + feature_maps)
-    captions = np.array([[['']]] * rois.shape[0])
-    captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
-    s = K.int_shape(captions)
-    captions = KL.TimeDistributed(KL.Lambda(lambda y: y, output_shape=s), dtype=captions.dtype)(captions)
+    td = KL.TimeDistributed(KL.Flatten())(x)
+
+    # v1
+    # rnn = KL.LSTM(units=embedding_size, return_sequences=True)(td)
+
+    # v2
+    td_r = KL.TimeDistributed(KL.RepeatVector(10))(td)  # number of words in the caption
+    rnn = KL.TimeDistributed(KL.LSTM(units=embedding_size, return_sequences=True))(td_r)
+
+    captions = KL.TimeDistributed(KL.Dense(embedding_size))(rnn)
+
+    # captions = np.array([[['']]] * rois.shape[0])
+    # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
+    # s = K.int_shape(captions)
+    # captions = KL.TimeDistributed(KL.Lambda(lambda y: y, output_shape=s), dtype=captions.dtype)(captions)
     return captions
+
 
 
 ############################################################
@@ -838,7 +850,8 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 
 def imgcap_caption_loss_graph(target_captions, generated_captions):
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    loss = tf.constant(0.0)
+    # keras.losses.categorical_crossentropy()
+    loss = tf.constant(1.0)
     return loss
 
 
@@ -1382,9 +1395,9 @@ class DenseImageCapRCNN:
                 shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
 
             # Generation GT (class IDs, bounding boxes, and masks)
-            # GT Captions
+            # GT Captions  # shape=[None, config.EMBEDDING_SIZE]
             input_gt_captions = KL.Input(
-                shape=[None], name="input_gt_captions", dtype=tf.string)
+                shape=[None], name="input_gt_captions", dtype=tf.float32)  # TODO: verify this
             # 2. GT Boxes in pixels (zero padded)
             # [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in image coordinates
             input_gt_boxes = KL.Input(
@@ -1483,21 +1496,21 @@ class DenseImageCapRCNN:
                 DetectionTargetLayer(config, name="proposal_targets")([
                     target_rois, input_gt_captions, gt_boxes])
 
+            # TODO: clean up (use tf.identify if necessary)
+            output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
+
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
             img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
                                                     config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE)
-
-            # TODO: clean up (use tf.identify if necessary)
-            output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
+                                                    config.POOL_SIZE, config.EMBEDDING_SIZE)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
                 [input_rpn_match, rpn_class_logits])
             rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
                 [input_rpn_bbox, input_rpn_match, rpn_bbox])
-            imgcap_loss = KL.Lambda(lambda x: imgcap_caption_loss_graph(*x), name="imgcap_caption_loss")(
+            imgcap_loss = KL.Lambda(lambda x: imgcap_caption_loss_graph(*x), name="imgcap_loss")(
                 [target_captions, img_cap_captions])
 
             # Model
@@ -1755,7 +1768,7 @@ class DenseImageCapRCNN:
         log("\nStarting at epoch {}. LR={}\n".format(self.epoch, learning_rate))
         log("Checkpoint Path: {}".format(self.checkpoint_path))
         self.set_trainable(layers)
-        self.compile(learning_rate, self.config.LEARNING_MOMENTUM)
+        self.compile(learning_rate)
 
         # Work-around for Windows: Keras fails on Windows when using
         # multiprocessing workers. See discussion here:
