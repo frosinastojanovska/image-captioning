@@ -95,7 +95,7 @@ class Config(object):
     # Image mean (RGB)
     MEAN_PIXEL = np.array([123.7, 116.8, 103.9])
 
-    # Number of ROIs per image to feed to classifier/mask heads
+    # Number of ROIs per image to feed to caption generation heads
     # The Mask RCNN paper uses 512 but often the RPN doesn't generate
     # enough positive proposals to fill this and keep a positive:negative
     # ratio of 1:3. You can increase the number of proposals by adjusting
@@ -147,6 +147,8 @@ class Config(object):
     # Embedding size
     EMBEDDING_SIZE = 100
 
+    # Padding size
+    PADDING_SIZE = 15
 
     def __init__(self):
         """Set values of computed attributes."""

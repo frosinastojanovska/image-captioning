@@ -568,7 +568,7 @@ def detection_targets_graph(proposals, gt_captions, gt_boxes, config):
     P = tf.maximum(config.TRAIN_ROIS_PER_IMAGE - tf.shape(rois)[0], 0)
     rois = tf.pad(rois, [(0, P), (0, 0)])
     roi_gt_boxes = tf.pad(roi_gt_boxes, [(0, N + P), (0, 0)])
-    roi_gt_captions = tf.pad(roi_gt_captions, [(0, N + P)])
+    roi_gt_captions = tf.pad(roi_gt_captions, [(0, N + P), (0, 0), (0, 0)])
     deltas = tf.pad(deltas, [(0, N + P), (0, 0)])
 
     return rois, roi_gt_captions, deltas
@@ -851,7 +851,7 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 def imgcap_caption_loss_graph(target_captions, generated_captions):
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     # keras.losses.categorical_crossentropy()
-    loss = tf.constant(1.0)
+    loss = tf.constant(0.0)
     return loss
 
 
@@ -1247,7 +1247,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                                              config.BACKBONE_STRIDES,
                                              config.RPN_ANCHOR_STRIDE)
 
-    # Keras requires a generator to run indefinately.
+    # Keras requires a generator to run indefinitely.
     while True:
         try:
             # Increment index to pick next image. Shuffle if at the start of an epoch.
@@ -1281,7 +1281,8 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 batch_images = np.zeros(
                     (batch_size,) + image.shape, dtype=np.float32)
                 batch_gt_captions = np.zeros(
-                    (batch_size, config.MAX_GT_INSTANCES), dtype=gt_captions.dtype)
+                    (batch_size, config.MAX_GT_INSTANCES, config.PADDING_SIZE, config.EMBEDDING_SIZE),
+                    dtype=gt_captions.dtype)
                 batch_gt_boxes = np.zeros(
                     (batch_size, config.MAX_GT_INSTANCES, 4), dtype=gt_boxes.dtype)
                 if random_rois:
@@ -1394,10 +1395,11 @@ class DenseImageCapRCNN:
             input_rpn_bbox = KL.Input(
                 shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
 
-            # Generation GT (class IDs, bounding boxes, and masks)
-            # GT Captions  # shape=[None, config.EMBEDDING_SIZE]
+            # Generation GT (captions, bounding boxes)
+            # GT Captions
             input_gt_captions = KL.Input(
-                shape=[None], name="input_gt_captions", dtype=tf.float32)  # TODO: verify this
+                shape=[None, self.config.PADDING_SIZE, self.config.EMBEDDING_SIZE],
+                name="input_gt_captions", dtype=tf.float32)
             # 2. GT Boxes in pixels (zero padded)
             # [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in image coordinates
             input_gt_boxes = KL.Input(
@@ -1629,7 +1631,7 @@ class DenseImageCapRCNN:
             if layer.output in self.keras_model.losses:
                 continue
             self.keras_model.add_loss(
-                tf.reduce_mean(layer.output, keep_dims=True))
+                tf.reduce_mean(layer.output, keepdims=True))
 
         # Compile
         self.keras_model.compile(optimizer=optimizer, loss=[
@@ -1642,7 +1644,7 @@ class DenseImageCapRCNN:
             layer = self.keras_model.get_layer(name)
             self.keras_model.metrics_names.append(name)
             self.keras_model.metrics_tensors.append(tf.reduce_mean(
-                layer.output, keep_dims=True))
+                layer.output, keepdims=True))
 
     def set_trainable(self, layer_regex, keras_model=None, indent=0, verbose=1):
         """Sets model layers as trainable if their names match

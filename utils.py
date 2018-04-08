@@ -293,6 +293,8 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
     padding: Padding added to the image [(top, bottom), (left, right), (0, 0)]
     """
     # Default window (y1, x1, y2, x2) and default scale == 1.
+    # Keep track of image dtype and return results in the same dtype
+    image_dtype = image.dtype
     h, w = image.shape[:2]
     window = (0, 0, h, w)
     scale = 1
@@ -321,7 +323,7 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
         padding = [(top_pad, bottom_pad), (left_pad, right_pad), (0, 0)]
         image = np.pad(image, padding, mode='constant', constant_values=0)
         window = (top_pad, left_pad, h + top_pad, w + left_pad)
-    return image, window, scale, padding
+    return image.astype(image_dtype), window, scale, padding
 
 
 ############################################################

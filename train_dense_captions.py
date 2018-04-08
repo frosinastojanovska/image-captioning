@@ -1,14 +1,15 @@
 import os
 import time
 import json
+import numpy as np
 import skimage.io as skiimage_io
 import skimage.color as skimage_color
+from keras.preprocessing.sequence import pad_sequences
 
-from config import Config
 import utils
+from config import Config
 import dense_model as modellib
 from preprocess import encode_caption, load_embeddings
-import numpy as np
 
 
 class DenseCapConfig(Config):
@@ -26,13 +27,16 @@ class DenseCapConfig(Config):
 
     STEPS_PER_EPOCH = 1000
     VALIDATION_STEPS = 50
-    # Reduce training ROIs per image because the images are small and have
-    # few objects. Aim to allow ROI sampling to pick 33% positive ROIs.
-    TRAIN_ROIS_PER_IMAGE = 32
+
+    # Embedding size
+    EMBEDDING_SIZE = 100
+
+    # Padding size
+    PADDING_SIZE = 15
 
 
 class VisualGenomeDataset(utils.Dataset):
-    def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file, embeddings):
+    def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file, embeddings, padding_size):
         with open(data_file, 'r', encoding='utf-8') as doc:
             data = json.loads(doc.read())
 
@@ -50,8 +54,8 @@ class VisualGenomeDataset(utils.Dataset):
                 path=os.path.join(data_dir, '{}.jpg'.format(i)),
                 width=image_meta[i-1]['width'],
                 height=image_meta[i-1]['height'],
-                rois=[[d['x'], d['y'], d['width'], d['height']] for d in data[i-1]['regions']],
-                captions=caps
+                rois=np.array([[d['x'], d['y'], d['width'], d['height']] for d in data[i-1]['regions']]),
+                captions=pad_sequences(caps, maxlen=padding_size, dtype='float').astype(np.float32)
             )
 
     def image_reference(self, image_id):
@@ -75,7 +79,7 @@ class VisualGenomeDataset(utils.Dataset):
         image_info = self.image_info[image_id]
         rois = image_info['rois']
         captions = image_info['captions']
-        return np.array(rois), np.array(captions)
+        return rois, captions
 
     def encode_region_caption(self, caption, embeddings):
         """ Convert caption to word embedding vector """
@@ -111,12 +115,14 @@ if __name__ == '__main__':
 
     # Training dataset
     dataset_train = VisualGenomeDataset()
-    dataset_train.load_visual_genome(data_directory, train_image_ids, image_meta_file_path, data_file_path, word_embeddings)
+    dataset_train.load_visual_genome(data_directory, train_image_ids, image_meta_file_path,
+                                     data_file_path, word_embeddings, config.PADDING_SIZE)
     dataset_train.prepare()
 
     # Validation dataset
     dataset_val = VisualGenomeDataset()
-    dataset_val.load_visual_genome(data_directory, val_image_ids, image_meta_file_path, data_file_path, word_embeddings)
+    dataset_val.load_visual_genome(data_directory, val_image_ids, image_meta_file_path,
+                                   data_file_path, word_embeddings, config.PADDING_SIZE)
     dataset_val.prepare()
 
     init_with = 'coco'
