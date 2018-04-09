@@ -19,6 +19,7 @@ import keras.backend as K
 import keras.layers as KL
 import keras.engine as KE
 import keras.models as KM
+from docutils.nodes import version
 
 import utils
 
@@ -752,20 +753,20 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  LSTM text generator
 ############################################################
 def lstm_generator_graph(rois, feature_maps,
-                         image_shape, pool_size, embedding_size):
+                         image_shape, pool_size, embedding_size, padding_size):
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
                         name="roi_align_generator")([rois] + feature_maps)
-    td = KL.TimeDistributed(KL.Flatten())(x)
+    td = KL.TimeDistributed(KL.Flatten(name='lstm_f1'), name='lstm_td1')(x)
 
     # v1
     # rnn = KL.LSTM(units=embedding_size, return_sequences=True)(td)
 
     # v2
-    td_r = KL.TimeDistributed(KL.RepeatVector(10))(td)  # number of words in the caption
-    rnn = KL.TimeDistributed(KL.LSTM(units=embedding_size, return_sequences=True))(td_r)
+    td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='lstm_rv1'), name='lstm_td2')(td)  # number of words in the caption
+    rnn = KL.TimeDistributed(KL.LSTM(units=embedding_size, return_sequences=True, name='lstm_lstm1'), name='lstm_td3')(td_r)
 
-    captions = KL.TimeDistributed(KL.Dense(embedding_size))(rnn)
+    captions = KL.TimeDistributed(KL.Dense(embedding_size, name='lstm_d1'), name='lstm_td4')(rnn)
 
     # captions = np.array([[['']]] * rois.shape[0])
     # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
@@ -849,9 +850,15 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 
 
 def imgcap_caption_loss_graph(target_captions, generated_captions):
-    # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    # keras.losses.categorical_crossentropy()
-    loss = tf.constant(0.0)
+    # loss = tf.constant(0.0)
+    # import config
+    batch_size = 8  # config.Config.BATCH_SIZE
+    rois_per_image = 200  # config.Config.TRAIN_ROIS_PER_IMAGE
+    padding_size = 15  # config.Config.PADDING_SIZE
+    embedding_size = 100  # config.Config.EMBEDDING_SIZE
+    target_captions = tf.reshape(target_captions, [batch_size * rois_per_image * padding_size, embedding_size])
+    generated_captions = tf.reshape(generated_captions, [batch_size * rois_per_image * padding_size, embedding_size])
+    loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)  # or 0 (distance should be calculated row-wise)
     return loss
 
 
@@ -1291,7 +1298,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                     if detection_targets:
                         batch_rois = np.zeros(
                             (batch_size,) + rois.shape, dtype=rois.dtype)
-                        batch_captions = np.zeros(
+                        batch_img_cap_captions = np.zeros(
                             (batch_size,) + captions.shape, dtype=captions.dtype)
 
             # If more instances than fits in the array, sub-sample from them.
@@ -1311,7 +1318,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 batch_rpn_rois[b] = rpn_rois
                 if detection_targets:
                     batch_rois[b] = rois
-                    batch_captions[b] = captions
+                    batch_img_cap_captions[b] = captions
             b += 1
 
             # Batch full?
@@ -1326,9 +1333,9 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                         inputs.extend([batch_rois])
                         # Keras requires that output and targets have the same number of dimensions
                         batch_img_cap_captions = np.expand_dims(
-                            batch_captions, -1)
+                            batch_img_cap_captions, -1)
                         outputs.extend(
-                            [batch_captions])
+                            [batch_img_cap_captions])
 
                 yield inputs, outputs
 
@@ -1460,7 +1467,6 @@ class DenseImageCapRCNN:
         outputs = list(zip(*layer_outputs))
         outputs = [KL.Concatenate(axis=1, name=n)(list(o))
                    for o, n in zip(outputs, output_names)]
-
         rpn_class_logits, rpn_class, rpn_bbox = outputs
 
         # Generate proposals
@@ -1505,7 +1511,7 @@ class DenseImageCapRCNN:
             # TODO: verify that this handles zero padded ROIs
             img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
                                                     config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE, config.EMBEDDING_SIZE)
+                                                    config.POOL_SIZE, config.EMBEDDING_SIZE, config.PADDING_SIZE)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
@@ -1537,7 +1543,6 @@ class DenseImageCapRCNN:
             # output is [batch, num_generations, (y1, x1, y2, x2, caption)] in image coordinates
             generations = GenerationMatchLayer(config, name="mrcnn_detection")(
                 [rpn_rois, img_cap_captions, input_image_meta])
-
             model = KM.Model([input_image, input_image_meta],
                              [generations, img_cap_captions,
                               rpn_rois, rpn_class, rpn_bbox],
@@ -1631,7 +1636,7 @@ class DenseImageCapRCNN:
             if layer.output in self.keras_model.losses:
                 continue
             self.keras_model.add_loss(
-                tf.reduce_mean(layer.output, keepdims=True))
+                tf.reduce_mean(layer.output, keep_dims=True))
 
         # Compile
         self.keras_model.compile(optimizer=optimizer, loss=[
@@ -1644,7 +1649,7 @@ class DenseImageCapRCNN:
             layer = self.keras_model.get_layer(name)
             self.keras_model.metrics_names.append(name)
             self.keras_model.metrics_tensors.append(tf.reduce_mean(
-                layer.output, keepdims=True))
+                layer.output, keep_dims=True))
 
     def set_trainable(self, layer_regex, keras_model=None, indent=0, verbose=1):
         """Sets model layers as trainable if their names match
@@ -1712,7 +1717,7 @@ class DenseImageCapRCNN:
             self.config.NAME.lower(), now))
 
         # Path to save after each epoch. Include placeholders that get filled by Keras.
-        self.checkpoint_path = os.path.join(self.log_dir, "mask_rcnn_{}_*epoch*.h5".format(
+        self.checkpoint_path = os.path.join(self.log_dir, "img_cap_{}_*epoch*.h5".format(
             self.config.NAME.lower()))
         self.checkpoint_path = self.checkpoint_path.replace(
             "*epoch*", "{epoch:04d}")
@@ -1740,11 +1745,11 @@ class DenseImageCapRCNN:
         layer_regex = {
             # TODO: change this to remove fpn and add name for the lstm layers
             # all layers but the backbone
-            "no_backbone": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "no_backbone": r"(imgcap\_.*)|(rpn\_.*)|(lstm\_.*)",
             # From a specific Resnet stage and up
-            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
-            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
-            "5+": r"(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(lstm\_.*)",
+            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(lstm\_.*)",
+            "5+": r"(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(lstm\_.*)",
             # All layers
             "all": ".*",
         }
@@ -1791,6 +1796,7 @@ class DenseImageCapRCNN:
             max_queue_size=100,
             workers=workers,
             use_multiprocessing=True,
+            verbose=2
         )
 
         self.epoch = max(self.epoch, epochs)
