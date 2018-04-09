@@ -19,7 +19,6 @@ import keras.backend as K
 import keras.layers as KL
 import keras.engine as KE
 import keras.models as KM
-from docutils.nodes import version
 
 import utils
 
@@ -1039,7 +1038,7 @@ def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
     # RPN Match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
-    # rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
+    rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
 
     # TODO: check if this really is unnecessary
     # # Handle COCO crowds
@@ -1100,39 +1099,39 @@ def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
         ids = np.random.choice(ids, extra, replace=False)
         rpn_match[ids] = 0
 
-    # # For positive anchors, compute shift and scale needed to transform them
-    # # to match the corresponding GT boxes.
-    # ids = np.where(rpn_match == 1)[0]
-    # ix = 0  # index into rpn_bbox
-    # # TODO: use box_refinment() rather than duplicating the code here
-    # for i, a in zip(ids, anchors[ids]):
-    #     # Closest gt box (it might have IoU < 0.7)
-    #     gt = gt_boxes[anchor_iou_argmax[i]]
-    #
-    #     # Convert coordinates to center plus width/height.
-    #     # GT Box
-    #     gt_h = gt[2] - gt[0]
-    #     gt_w = gt[3] - gt[1]
-    #     gt_center_y = gt[0] + 0.5 * gt_h
-    #     gt_center_x = gt[1] + 0.5 * gt_w
-    #     # Anchor
-    #     a_h = a[2] - a[0]
-    #     a_w = a[3] - a[1]
-    #     a_center_y = a[0] + 0.5 * a_h
-    #     a_center_x = a[1] + 0.5 * a_w
-    #
-    #     # Compute the bbox refinement that the RPN should predict.
-    #     rpn_bbox[ix] = [
-    #         (gt_center_y - a_center_y) / a_h,
-    #         (gt_center_x - a_center_x) / a_w,
-    #         np.log(gt_h / a_h),
-    #         np.log(gt_w / a_w),
-    #     ]
-    #     # Normalize
-    #     rpn_bbox[ix] /= config.RPN_BBOX_STD_DEV
-    #     ix += 1
+    # For positive anchors, compute shift and scale needed to transform them
+    # to match the corresponding GT boxes.
+    ids = np.where(rpn_match == 1)[0]
+    ix = 0  # index into rpn_bbox
+    # TODO: use box_refinment() rather than duplicating the code here
+    for i, a in zip(ids, anchors[ids]):
+        # Closest gt box (it might have IoU < 0.7)
+        gt = gt_boxes[anchor_iou_argmax[i]]
 
-    return rpn_match  # , rpn_bbox
+        # Convert coordinates to center plus width/height.
+        # GT Box
+        gt_h = gt[2] - gt[0]
+        gt_w = gt[3] - gt[1]
+        gt_center_y = gt[0] + 0.5 * gt_h
+        gt_center_x = gt[1] + 0.5 * gt_w
+        # Anchor
+        a_h = a[2] - a[0]
+        a_w = a[3] - a[1]
+        a_center_y = a[0] + 0.5 * a_h
+        a_center_x = a[1] + 0.5 * a_w
+
+        # Compute the bbox refinement that the RPN should predict.
+        rpn_bbox[ix] = [
+            (gt_center_y - a_center_y) / a_h,
+            (gt_center_x - a_center_x) / a_w,
+            np.log(gt_h / a_h),
+            np.log(gt_w / a_w),
+        ]
+        # Normalize
+        rpn_bbox[ix] /= config.RPN_BBOX_STD_DEV
+        ix += 1
+
+    return rpn_match, rpn_bbox
 
 
 def generate_random_rois(image_shape, count, gt_captions, gt_boxes):
@@ -1268,7 +1267,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 load_image_gt(dataset, config, image_id, augment=augment)
 
             # RPN Targets
-            rpn_match = build_rpn_targets(image.shape, anchors,
+            rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors,
                                           gt_captions, gt_boxes, config)
 
             # Image Caption R-CNN Targets
@@ -1285,6 +1284,8 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                     (batch_size,) + image_meta.shape, dtype=image_meta.dtype)
                 batch_rpn_match = np.zeros(
                     [batch_size, anchors.shape[0], 1], dtype=rpn_match.dtype)
+                batch_rpn_bbox = np.zeros(
+                    [batch_size, config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4], dtype=rpn_bbox.dtype                )
                 batch_images = np.zeros(
                     (batch_size,) + image.shape, dtype=np.float32)
                 batch_gt_captions = np.zeros(
@@ -1311,6 +1312,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
             # Add to batch
             batch_image_meta[b] = image_meta
             batch_rpn_match[b] = rpn_match[:, np.newaxis]
+            batch_rpn_bbox[b] = rpn_bbox
             batch_images[b] = mold_image(image.astype(np.float32), config)
             batch_gt_captions[b, :gt_captions.shape[0]] = gt_captions
             batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
@@ -1324,7 +1326,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
             # Batch full?
             if b >= batch_size:
                 inputs = [batch_images, batch_image_meta, batch_rpn_match,
-                          batch_gt_captions, batch_gt_boxes]
+                          batch_rpn_bbox, batch_gt_captions, batch_gt_boxes]
                 outputs = []
 
                 if random_rois:
