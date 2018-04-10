@@ -23,7 +23,7 @@ class DenseCapConfig(Config):
     # Train on 1 GPU and 8 images per GPU. We can put multiple images on each
     # GPU because the images are small. Batch size is 8 (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 8
+    IMAGES_PER_GPU = 1
 
     STEPS_PER_EPOCH = 1000
     VALIDATION_STEPS = 50
@@ -87,6 +87,16 @@ class VisualGenomeDataset(utils.Dataset):
 
 
 if __name__ == '__main__':
+    import keras.backend as K
+    K.clear_session()
+    import tensorflow as tf
+    import os
+    os.environ["CUDA_VISIBLE_DEVICES"] = '1'  # use GPU with ID=0
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = 0.5  # maximun alloc gpu50% of MEM
+    config.gpu_options.allow_growth = True  # allocate dynamically
+    sess = tf.Session(config=config)
+
     # Root directory of the project
     ROOT_DIR = os.getcwd()
 

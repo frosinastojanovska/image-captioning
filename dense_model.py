@@ -756,16 +756,17 @@ def lstm_generator_graph(rois, feature_maps,
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
                         name="roi_align_generator")([rois] + feature_maps)
-    td = KL.TimeDistributed(KL.Flatten(name='lstm_f1'), name='lstm_td1')(x)
+    td = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
 
     # v1
     # rnn = KL.LSTM(units=embedding_size, return_sequences=True)(td)
 
     # v2
-    td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='lstm_rv1'), name='lstm_td2')(td)  # number of words in the caption
-    rnn = KL.TimeDistributed(KL.LSTM(units=embedding_size, return_sequences=True, name='lstm_lstm1'), name='lstm_td3')(td_r)
+    td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
+    rnn = KL.TimeDistributed(KL.LSTM(units=embedding_size, return_sequences=True, name='imgcap_lstm_lstm1'),
+                             name='imgcap_lstm_td3')(td_r)
 
-    captions = KL.TimeDistributed(KL.Dense(embedding_size, name='lstm_d1'), name='lstm_td4')(rnn)
+    captions = KL.TimeDistributed(KL.Dense(embedding_size, name='imgcap_lstm_d1'), name='imgcap_lstm_td4')(rnn)
 
     # captions = np.array([[['']]] * rois.shape[0])
     # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
@@ -849,14 +850,10 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 
 
 def imgcap_caption_loss_graph(target_captions, generated_captions):
-    # loss = tf.constant(0.0)
-    # import config
-    batch_size = 8  # config.Config.BATCH_SIZE
-    rois_per_image = 200  # config.Config.TRAIN_ROIS_PER_IMAGE
-    padding_size = 15  # config.Config.PADDING_SIZE
-    embedding_size = 100  # config.Config.EMBEDDING_SIZE
-    target_captions = tf.reshape(target_captions, [batch_size * rois_per_image * padding_size, embedding_size])
-    generated_captions = tf.reshape(generated_captions, [batch_size * rois_per_image * padding_size, embedding_size])
+    import config
+    embedding_size = config.Config.EMBEDDING_SIZE
+    target_captions = tf.reshape(target_captions, [-1, embedding_size])
+    generated_captions = tf.reshape(generated_captions, [-1, embedding_size])
     loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)  # or 0 (distance should be calculated row-wise)
     return loss
 
@@ -1747,11 +1744,11 @@ class DenseImageCapRCNN:
         layer_regex = {
             # TODO: change this to remove fpn and add name for the lstm layers
             # all layers but the backbone
-            "no_backbone": r"(imgcap\_.*)|(rpn\_.*)|(lstm\_.*)",
+            "no_backbone": r"(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
             # From a specific Resnet stage and up
-            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(lstm\_.*)",
-            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(lstm\_.*)",
-            "5+": r"(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(lstm\_.*)",
+            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "5+": r"(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
             # All layers
             "all": ".*",
         }
