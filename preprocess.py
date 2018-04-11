@@ -6,7 +6,6 @@ from scipy.spatial import distance
 
 def load_embeddings(file_name):
     embeddings = dict()
-    i = 0  # TODO: Remove this line
     with open(file_name, 'r', encoding='utf-8') as doc:
         line = doc.readline()
         while line != '':
@@ -15,9 +14,6 @@ def load_embeddings(file_name):
             vals = np.array(parts[1:], dtype=np.float)
             embeddings[parts[0]] = vals
             line = doc.readline()
-            i += 1  # TODO: Remove this line
-            if i > 5:  # TODO: Remove this line
-                break  # TODO: Remove this line
     return embeddings
 
 
@@ -36,12 +32,15 @@ def encode_word(word, embeddings):
     if word in embeddings.keys():
         vec = embeddings[word]
     else:
+        '''
         w = Word(word)
         w = w.spellcheck()[0][0]
         if w in embeddings.keys():
             vec = embeddings[w]
         else:
             vec = np.zeros(100)
+        '''
+        vec = np.zeros(100)
     return vec
 
 
