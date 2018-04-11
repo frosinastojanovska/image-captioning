@@ -299,7 +299,7 @@ class ProposalLayer(KE.Layer):
         return proposals
 
     def compute_output_shape(self, input_shape):
-        return (None, self.proposal_count, 4)
+        return None, self.proposal_count, 4
 
 
 ############################################################
@@ -450,18 +450,20 @@ def overlaps_graph(boxes1, boxes2):
 
 def detection_targets_graph(proposals, gt_captions, gt_boxes, config):
     """Generates detection targets for one image. Subsamples proposals and
-    generates target class IDs, bounding box deltas, and masks for each.
+    generates target captions and bounding box deltas for each.
 
     Inputs:
     proposals: [N, (y1, x1, y2, x2)] in normalized coordinates. Might
                be zero padded if there are not enough proposals.
-    gt_captions: [MAX_GT_INSTANCES] string captions
+    gt_captions: [MAX_GT_INSTANCES, word embeddings] captions with word embeddings
     gt_boxes: [MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized coordinates.
 
     Returns: Target ROIs and corresponding class IDs, bounding box shifts,
     and masks.
     rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized coordinates
-    captions: [TRAIN_ROIS_PER_IMAGE]. String captions.
+    captions: [TRAIN_ROIS_PER_IMAGE, word embeddings]. Captions word embeddings.
+    deltas: [TRAIN_ROIS_PER_IMAGE, (dy, dx, log(dh), log(dw))]
+            Class-specific bbox refinments.
 
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
@@ -530,37 +532,6 @@ def detection_targets_graph(proposals, gt_captions, gt_boxes, config):
     deltas = utils.box_refinement_graph(positive_rois, roi_gt_boxes)
     deltas /= config.BBOX_STD_DEV
 
-    # # Assign positive ROIs to GT masks
-    # # Permute masks to [N, height, width, 1]
-    # transposed_masks = tf.expand_dims(tf.transpose(gt_masks, [2, 0, 1]), -1)
-    # # Pick the right mask for each ROI
-    # roi_masks = tf.gather(transposed_masks, roi_gt_box_assignment)
-    #
-    # # Compute mask targets
-    # boxes = positive_rois
-    # if config.USE_MINI_MASK:
-    #     # Transform ROI corrdinates from normalized image space
-    #     # to normalized mini-mask space.
-    #     y1, x1, y2, x2 = tf.split(positive_rois, 4, axis=1)
-    #     gt_y1, gt_x1, gt_y2, gt_x2 = tf.split(roi_gt_boxes, 4, axis=1)
-    #     gt_h = gt_y2 - gt_y1
-    #     gt_w = gt_x2 - gt_x1
-    #     y1 = (y1 - gt_y1) / gt_h
-    #     x1 = (x1 - gt_x1) / gt_w
-    #     y2 = (y2 - gt_y1) / gt_h
-    #     x2 = (x2 - gt_x1) / gt_w
-    #     boxes = tf.concat([y1, x1, y2, x2], 1)
-    # box_ids = tf.range(0, tf.shape(roi_masks)[0])
-    # masks = tf.image.crop_and_resize(tf.cast(roi_masks, tf.float32), boxes,
-    #                                  box_ids,
-    #                                  config.MASK_SHAPE)
-    # # Remove the extra dimension from masks.
-    # masks = tf.squeeze(masks, axis=3)
-    #
-    # # Threshold mask pixels at 0.5 to have GT masks be 0 or 1 to use with
-    # # binary cross entropy loss.
-    # masks = tf.round(masks)
-
     # Append negative ROIs and pad bbox deltas and masks that
     # are not used for negative ROIs with zeros.
     rois = tf.concat([positive_rois, negative_rois], axis=0)
@@ -575,20 +546,19 @@ def detection_targets_graph(proposals, gt_captions, gt_boxes, config):
 
 
 class DetectionTargetLayer(KE.Layer):
-    """Subsamples proposals and generates target box refinement, class_ids,
-    and masks for each.
+    """Subsamples proposals and generates target box refinement and captions for each.
 
     Inputs:
     proposals: [batch, N, (y1, x1, y2, x2)] in normalized coordinates. Might
                be zero padded if there are not enough proposals.
-    gt_captions: [batch, MAX_GT_INSTANCES] String captions.
+    gt_captions: [batch, MAX_GT_INSTANCES, word embeddings] captions with word embeddings
     gt_boxes: [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized
               coordinates.
 
     Returns: Target ROIs and corresponding captions.
     rois: [batch, TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized
           coordinates
-    target_captions: [batch, TRAIN_ROIS_PER_IMAGE]. String captions.
+    target_captions: [batch, TRAIN_ROIS_PER_IMAGE, word embeddings] captions with word embeddings
 
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
@@ -603,7 +573,6 @@ class DetectionTargetLayer(KE.Layer):
         gt_boxes = inputs[2]
 
         # Slice the batch and run a graph for each slice
-        # TODO: Rename target_bbox to target_deltas for clarity
         names = ["rois", "target_captions", "target_bbox"]
         outputs = utils.batch_slice(
             [proposals, gt_captions, gt_boxes],
@@ -615,7 +584,7 @@ class DetectionTargetLayer(KE.Layer):
     def compute_output_shape(self, input_shape):
         return [
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # rois
-            (None, 1),  # captions
+            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.PADDING_SIZE, self.config.EMBEDDING_SIZE),  # captions
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4)  # deltas
         ]
 
@@ -642,7 +611,7 @@ class GenerationMatchLayer(KE.Layer):
     returns the final detection boxes.
 
     Returns:
-    [batch, num_detections, (y1, x1, y2, x2, class_score)] in pixels
+    [batch, num_detections, (y1, x1, y2, x2, caption)] in pixels
     """
 
     def __init__(self, config=None, **kwargs):
@@ -677,7 +646,7 @@ class GenerationMatchLayer(KE.Layer):
         return tf.py_func(wrapper, inputs, tf.float32)
 
     def compute_output_shape(self, input_shape):
-        return (None, self.config.DETECTION_MAX_INSTANCES, 6)
+        return None, self.config.DETECTION_MAX_INSTANCES, 6
 
 
 # Region Proposal Network (RPN)
@@ -775,7 +744,6 @@ def lstm_generator_graph(rois, feature_maps,
     return captions
 
 
-
 ############################################################
 #  Loss Functions
 ############################################################
@@ -850,8 +818,9 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 
 
 def imgcap_caption_loss_graph(target_captions, generated_captions):
-    import config
-    embedding_size = config.Config.EMBEDDING_SIZE
+    """ Returns caption word embeddings loss
+    """
+    embedding_size = generated_captions.shape[-1]
     target_captions = tf.reshape(target_captions, [-1, embedding_size])
     generated_captions = tf.reshape(generated_captions, [-1, embedding_size])
     loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)  # or 0 (distance should be calculated row-wise)
@@ -871,10 +840,10 @@ def load_image_gt(dataset, config, image_id, augment=False):
     Returns:
     image: [height, width, 3]
     shape: the original shape of the image before resizing and cropping.
-    captions: [instance_count] string captions
+    captions: [instance_count, embeddings] captions word embeddings
     bbox: [instance_count, (y1, x1, y2, x2)]
     """
-    # Load image and mask
+    # Load image
     image = dataset.load_image(image_id)
     bboxes, captions = dataset.load_captions_and_rois(image_id)
 
@@ -884,8 +853,6 @@ def load_image_gt(dataset, config, image_id, augment=False):
         min_dim=config.IMAGE_MIN_DIM,
         max_dim=config.IMAGE_MAX_DIM,
         padding=config.IMAGE_PADDING)
-    # mask = utils.resize_mask(mask, scale, padding)
-    # TODO: add caption lemmatization and etc. ...
 
     # Random horizontal flips.
     if augment:
@@ -905,12 +872,12 @@ def build_text_generation_targets(rpn_rois, gt_captions, gt_boxes, config):
 
     Inputs:
     rpn_rois: [N, (y1, x1, y2, x2)] proposal boxes.
-    gt_captions: [instance count] String caption
+    gt_captions: [instance count, embeddings] captions word embeddings
     gt_boxes: [instance count, (y1, x1, y2, x2)]
 
     Returns:
     rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)]
-    captions: [TRAIN_ROIS_PER_IMAGE]. String captions.
+    captions: [TRAIN_ROIS_PER_IMAGE, embeddings] captions word embeddings
     """
     assert rpn_rois.shape[0] > 0
     assert gt_captions.shape[0] != rpn_rois.shape[0]
@@ -1006,16 +973,7 @@ def build_text_generation_targets(rpn_rois, gt_captions, gt_boxes, config):
     roi_gt_captions = rpn_roi_gt_captions[keep]
     roi_gt_assignment = rpn_roi_iou_argmax[keep]
 
-    # Class-aware bbox deltas. [y, x, log(h), log(w)]
-    bboxes = np.zeros((config.TRAIN_ROIS_PER_IMAGE,
-                       config.NUM_CLASSES, 4), dtype=np.float32)
-    pos_ids = np.where(roi_gt_captions != '')[0]
-    bboxes[pos_ids, roi_gt_captions[pos_ids]] = utils.box_refinement(
-        rois[pos_ids], roi_gt_boxes[pos_ids, :4])
-    # Normalize bbox refinments
-    bboxes /= config.BBOX_STD_DEV
-
-    return rois, roi_gt_captions  # , bboxes
+    return rois, roi_gt_captions
 
 
 def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
@@ -1024,7 +982,7 @@ def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
     anchors and deltas to refine them to match their corresponding GT boxes.
 
     anchors: [num_anchors, (y1, x1, y2, x2)]
-    gt_captions: [num_gt_boxes] string captions.
+    gt_captions: [num_gt_boxes, embeddings] captions word embeddings
     gt_boxes: [num_gt_boxes, (y1, x1, y2, x2)]
 
     Returns:
@@ -1036,25 +994,6 @@ def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
     rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
-
-    # TODO: check if this really is unnecessary
-    # # Handle COCO crowds
-    # # A crowd box in COCO is a bounding box around several instances. Exclude
-    # # them from training. A crowd box is given a negative class ID.
-    # crowd_ix = np.where(gt_class_ids < 0)[0]
-    # if crowd_ix.shape[0] > 0:
-    #     # Filter out crowds from ground truth class IDs and boxes
-    #     non_crowd_ix = np.where(gt_class_ids > 0)[0]
-    #     crowd_boxes = gt_boxes[crowd_ix]
-    #     gt_class_ids = gt_class_ids[non_crowd_ix]
-    #     gt_boxes = gt_boxes[non_crowd_ix]
-    #     # Compute overlaps with crowd boxes [anchors, crowds]
-    #     crowd_overlaps = utils.compute_overlaps(anchors, crowd_boxes)
-    #     crowd_iou_max = np.amax(crowd_overlaps, axis=1)
-    #     no_crowd_bool = (crowd_iou_max < 0.001)
-    # else:
-    #     # All anchors don't intersect a crowd
-    #     no_crowd_bool = np.ones([anchors.shape[0]], dtype=bool)
 
     # Compute overlaps [num_anchors, num_gt_boxes]
     overlaps = utils.compute_overlaps(anchors, gt_boxes)
@@ -1137,7 +1076,7 @@ def generate_random_rois(image_shape, count, gt_captions, gt_boxes):
 
     image_shape: [Height, Width, Depth]
     count: Number of ROIs to generate
-    gt_captions: [N] String captions
+    gt_captions: [N, embeddings] captions word embeddings
     gt_boxes: [N, (y1, x1, y2, x2)] Ground truth boxes in pixels.
 
     Returns: [count, (y1, x1, y2, x2)] ROI boxes in pixels.
@@ -1219,8 +1158,8 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                  network classifier and mask heads. Useful if training
                  the Mask RCNN part without the RPN.
     batch_size: How many images to return in each call
-    detection_targets: If True, generate detection targets (class IDs, bbox
-        deltas, and masks). Typically for debugging or visualizations because
+    detection_targets: If True, generate detection targets (captions, bbox
+        and deltas). Typically for debugging or visualizations because
         in training detection targets are generated by DetectionTargetLayer.
 
     Returns a Python generator. Upon calling next() on it, the
@@ -1231,7 +1170,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
     - image_meta: [batch, size of image meta]
     - rpn_match: [batch, N] Integer (1=positive anchor, -1=negative, 0=neutral)
     - rpn_bbox: [batch, N, (dy, dx, log(dh), log(dw))] Anchor bbox deltas.
-    - gt_class_ids: [batch, MAX_GT_INSTANCES] string captions
+    - gt_class_ids: [batch, MAX_GT_INSTANCES, embeddings] captions word embeddings
     - gt_boxes: [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)]
 
     outputs list: Usually empty in regular training. But if detection_targets
@@ -1480,10 +1419,6 @@ class DenseImageCapRCNN:
                                  config=config)([rpn_class, rpn_bbox])
 
         if mode == "training":
-            # # Class ID mask to mark class IDs supported by the dataset the image
-            # # came from.
-            # _, _, _, active_class_ids = KL.Lambda(lambda x: parse_image_meta_graph(x),
-            #                                       mask=[None, None, None, None])(input_image_meta)
 
             if not config.USE_RPN_ROIS:
                 # Ignore predicted ROIs and use ROIs provided as an input.
@@ -1618,7 +1553,6 @@ class DenseImageCapRCNN:
         self.set_log_dir(filepath)
 
     def compile(self, learning_rate):
-        #TODO: change this part
         """Gets the model ready for training. Adds losses, regularization, and
         metrics. Then calls the Keras compile() function.
         """
