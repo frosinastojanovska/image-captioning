@@ -1557,7 +1557,7 @@ class DenseImageCapRCNN:
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        optimizer = keras.optimizers.Adam(lr=learning_rate, amsgrad=True)
+        optimizer = keras.optimizers.Adam(lr=learning_rate, clipnorm=0.5, amsgrad=True)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
