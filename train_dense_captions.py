@@ -36,7 +36,12 @@ class DenseCapConfig(Config):
 
 
 class VisualGenomeDataset(utils.Dataset):
-    def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file, embeddings, padding_size):
+    def __init__(self, embeddings, padding_size):
+        super().__init__()
+        self.word_embeddings = embeddings
+        self.padding_size = padding_size
+
+    def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
         with open(data_file, 'r', encoding='utf-8') as doc:
             data = json.loads(doc.read())
 
@@ -46,16 +51,13 @@ class VisualGenomeDataset(utils.Dataset):
         # Add images
         for i in image_ids:
             captions = [[d['phrase']] for d in data[i - 1]['regions']]
-            caps = []
-            for caption in captions:
-                caps.append(self.encode_region_caption(caption[0], embeddings))
             self.add_image(
                 "VisualGenome", image_id=i,
                 path=os.path.join(data_dir, '{}.jpg'.format(i)),
                 width=image_meta[i-1]['width'],
                 height=image_meta[i-1]['height'],
-                rois=np.array([[d['x'], d['y'], d['width'], d['height']] for d in data[i-1]['regions']]),
-                captions=pad_sequences(caps, maxlen=padding_size, dtype='float').astype(np.float32)
+                rois=[[d['x'], d['y'], d['width'], d['height']] for d in data[i-1]['regions']],
+                captions=captions
             )
 
     def image_reference(self, image_id):
@@ -77,8 +79,12 @@ class VisualGenomeDataset(utils.Dataset):
         """Generate instance masks for shapes of the given image ID.
         """
         image_info = self.image_info[image_id]
-        rois = image_info['rois']
+        rois = np.array(image_info['rois'])
         captions = image_info['captions']
+        caps = []
+        for caption in captions:
+            caps.append(self.encode_region_caption(caption[0], self.word_embeddings))
+        captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
         return rois, captions
 
     def encode_region_caption(self, caption, embeddings):
@@ -124,15 +130,15 @@ if __name__ == '__main__':
     word_embeddings = load_embeddings('dataset/glove.6B.100d.txt')
 
     # Training dataset
-    dataset_train = VisualGenomeDataset()
-    dataset_train.load_visual_genome(data_directory, train_image_ids, image_meta_file_path,
-                                     data_file_path, word_embeddings, config.PADDING_SIZE)
+    dataset_train = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE)
+    dataset_train.load_visual_genome(data_directory, train_image_ids,
+                                     image_meta_file_path, data_file_path)
     dataset_train.prepare()
 
     # Validation dataset
-    dataset_val = VisualGenomeDataset()
-    dataset_val.load_visual_genome(data_directory, val_image_ids, image_meta_file_path,
-                                   data_file_path, word_embeddings, config.PADDING_SIZE)
+    dataset_val = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE)
+    dataset_val.load_visual_genome(data_directory, val_image_ids,
+                                   image_meta_file_path, data_file_path)
     dataset_val.prepare()
 
     init_with = 'coco'
@@ -155,11 +161,10 @@ if __name__ == '__main__':
     # Passing layers="all" trains all layers. You can also
     # pass a regular expression to select which layers to
     # train by name pattern.
-    # TODO: CHANGE TO TRAIN THE LAYERS C4+ (or something else)
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
                 epochs=2,
-                layers="all")
+                layers="4+")
 
     end_time = time.time()
     print(end_time - start_time)
