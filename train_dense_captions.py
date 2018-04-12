@@ -1,4 +1,5 @@
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 import time
 import json
 import numpy as np
@@ -56,7 +57,7 @@ class VisualGenomeDataset(utils.Dataset):
                 path=os.path.join(data_dir, '{}.jpg'.format(i)),
                 width=image_meta[i-1]['width'],
                 height=image_meta[i-1]['height'],
-                rois=[[d['x'], d['y'], d['width'], d['height']] for d in data[i-1]['regions']],
+                rois=[[d['y'], d['x'], d['y'] + d['height'], d['x'] + d['width']] for d in data[i-1]['regions']],
                 captions=captions
             )
 
@@ -93,15 +94,15 @@ class VisualGenomeDataset(utils.Dataset):
 
 
 if __name__ == '__main__':
+    '''
     import keras.backend as K
     K.clear_session()
     import tensorflow as tf
-    import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = ''  # use GPU with ID=0
     config = tf.ConfigProto()
     config.gpu_options.per_process_gpu_memory_fraction = 0.5  # maximun alloc gpu50% of MEM
     config.gpu_options.allow_growth = True  # allocate dynamically
     sess = tf.Session(config=config)
+    '''
 
     # Root directory of the project
     ROOT_DIR = os.getcwd()
@@ -163,7 +164,7 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
-                epochs=2,
+                epochs=1,
                 layers="4+")
 
     end_time = time.time()

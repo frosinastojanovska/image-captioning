@@ -19,6 +19,7 @@ import keras.backend as K
 import keras.layers as KL
 import keras.engine as KE
 import keras.models as KM
+import math
 
 import utils
 
@@ -735,7 +736,7 @@ def lstm_generator_graph(rois, feature_maps,
     rnn = KL.TimeDistributed(KL.LSTM(units=embedding_size, return_sequences=True, name='imgcap_lstm_lstm1'),
                              name='imgcap_lstm_td3')(td_r)
 
-    captions = KL.TimeDistributed(KL.Dense(embedding_size, name='imgcap_lstm_d1'), name='imgcap_lstm_td4')(rnn)
+    captions = KL.TimeDistributed(KL.Dense(embedding_size, activation='relu', name='imgcap_lstm_d1'), name='imgcap_lstm_td4')(rnn)
 
     # captions = np.array([[['']]] * rois.shape[0])
     # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
@@ -1043,7 +1044,6 @@ def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
     for i, a in zip(ids, anchors[ids]):
         # Closest gt box (it might have IoU < 0.7)
         gt = gt_boxes[anchor_iou_argmax[i]]
-
         # Convert coordinates to center plus width/height.
         # GT Box
         gt_h = gt[2] - gt[0]
@@ -1557,7 +1557,7 @@ class DenseImageCapRCNN:
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        optimizer = keras.optimizers.Adam(lr=learning_rate, amsgrad=True)
+        optimizer = keras.optimizers.Adam(lr=learning_rate, clipnorm=0.5, amsgrad=True)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
@@ -1729,7 +1729,7 @@ class DenseImageCapRCNN:
             max_queue_size=100,
             workers=workers,
             use_multiprocessing=True,
-            verbose=2
+            verbose=1
         )
 
         self.epoch = max(self.epoch, epochs)
