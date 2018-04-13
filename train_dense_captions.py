@@ -1,5 +1,4 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 import time
 import json
 import numpy as np
@@ -11,6 +10,8 @@ import utils
 from config import Config
 import dense_model as modellib
 from preprocess import encode_caption, load_embeddings
+
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 class DenseCapConfig(Config):

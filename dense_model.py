@@ -606,6 +606,35 @@ def clip_to_window(window, boxes):
     return boxes
 
 
+def refine_generations(rois, captions, window, config):
+    """Refine classified proposals and filter overlaps and return final
+    generations.
+
+    Inputs:
+        rois: [N, (y1, x1, y2, x2)] in normalized coordinates
+        captions: [N, embeddings]. Captions embeddings
+        window: (y1, x1, y2, x2) in image coordinates. The part of the image
+            that contains the image excluding the padding.
+
+    Returns detections shaped: [N, (y1, x1, y2, x2, embeddings)]
+    """
+    # Convert coordiates to image domain
+    # TODO: better to keep them normalized until later
+    height, width = config.IMAGE_SHAPE[:2]
+    # Clip boxes to image window
+    refined_rois = clip_to_window(window, rois)
+    # Round and cast to int since we're deadling with pixels now
+    refined_rois = np.rint(refined_rois).astype(np.int32)
+
+    # TODO: Filter out boxes with zero area
+
+    # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
+    # Coordinates are in image domain.
+    result = np.hstack((refined_rois,
+                        captions.reshape(captions.shape[0], -1)))
+    return result
+
+
 class GenerationMatchLayer(KE.Layer):
     # TODO: Check this, probably is going to fail
     """Takes proposal boxes with the generated captions and their bounding box deltas and
@@ -624,16 +653,13 @@ class GenerationMatchLayer(KE.Layer):
             detections_batch = []
             _, _, window = parse_image_meta(image_meta)
             for b in range(self.config.BATCH_SIZE):
-                generations = np.hstack((rois[b],
-                                        img_cap_captions[b]))
-                    # refine_detections(
-                    # rois[b], mrcnn_class[b], mrcnn_bbox[b], window[b], self.config)
+                generations = refine_generations(rois[b], img_cap_captions[b], window[b], self.config)
                 # Pad with zeros if detections < DETECTION_MAX_INSTANCES
-                gap = self.config.DETECTION_MAX_INSTANCES - generations.shape[0]
-                assert gap >= 0
-                if gap > 0:
-                    generations = np.pad(
-                        generations, [(0, gap), (0, 0)], 'constant', constant_values=0)
+                # gap = self.config.DETECTION_MAX_INSTANCES - generations.shape[0]
+                # assert gap >= 0
+                # if gap > 0:
+                #     generations = np.pad(
+                #         generations, [(0, gap), (0, 0)], 'constant', constant_values=0)
                 detections_batch.append(generations)
 
             # Stack detections and cast to float32
@@ -641,7 +667,7 @@ class GenerationMatchLayer(KE.Layer):
             detections_batch = np.array(detections_batch).astype(np.float32)
             # Reshape output
             # [batch, num_detections, (y1, x1, y2, x2, class_score)] in pixels
-            return np.reshape(detections_batch, [self.config.BATCH_SIZE, self.config.DETECTION_MAX_INSTANCES, 6])
+            return detections_batch # np.reshape(detections_batch, [self.config.BATCH_SIZE, self.config.DETECTION_MAX_INSTANCES, 6])
 
         # Return wrapped function
         return tf.py_func(wrapper, inputs, tf.float32)
@@ -1471,10 +1497,12 @@ class DenseImageCapRCNN:
             # Caption text generator
             img_cap_captions = lstm_generator_graph(rpn_rois, img_cap_feature_maps,
                                                     config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE)
+                                                    config.POOL_SIZE,
+                                                    config.EMBEDDING_SIZE,
+                                                    config.PADDING_SIZE)
 
             # Generations
-            # output is [batch, num_generations, (y1, x1, y2, x2, caption)] in image coordinates
+            # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
             generations = GenerationMatchLayer(config, name="mrcnn_detection")(
                 [rpn_rois, img_cap_captions, input_image_meta])
             model = KM.Model([input_image, input_image_meta],
@@ -1759,9 +1787,7 @@ class DenseImageCapRCNN:
                 padding=self.config.IMAGE_PADDING)
             molded_image = mold_image(molded_image, self.config)
             # Build image_meta
-            image_meta = compose_image_meta(
-                0, image.shape, window,
-                np.zeros([self.config.NUM_CLASSES], dtype=np.int32))
+            image_meta = compose_image_meta(0, image.shape, window)
             # Append
             molded_images.append(molded_image)
             windows.append(window)
@@ -1788,12 +1814,12 @@ class DenseImageCapRCNN:
         """
         # How many detections do we have?
         # Detections array is padded with zeros. Find the first caption == ''.
-        zero_ix = np.where(generations[:, 4] == '')[0]
-        n = zero_ix[0] if zero_ix.shape[0] > 0 else generations.shape[0]
+        # zero_ix = np.where(generations[:, 4] == '')[0]
+        # n = zero_ix[0] if zero_ix.shape[0] > 0 else generations.shape[0]
 
         # Extract boxes, and image captions
-        boxes = generations[:n, :4]
-        image_captions = generations[:n, 4].astype(np.str)
+        boxes = generations[:, :4]
+        image_captions = generations[:, 4:]
 
         # Compute scale and shift to translate coordinates to image domain.
         h_scale = image_shape[0] / (window[2] - window[0])
@@ -1816,14 +1842,14 @@ class DenseImageCapRCNN:
 
         return boxes, image_captions
 
-    def generate_caption(self, images, verbose=0):
+    def generate_captions(self, images, verbose=0):
         """Runs the caption generation pipeline.
 
         images: List of images, potentially of different sizes.
 
         Returns a list of dicts, one dict per image. The dict contains:
         rois: [N, (y1, x1, y2, x2)] detection bounding boxes
-        captions: [N] string image captions
+        captions: [N, embeddings] image captions embeddings
         """
         assert self.mode == "inference", "Create model in inference mode."
         assert len(
