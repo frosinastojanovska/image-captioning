@@ -621,6 +621,7 @@ def refine_generations(rois, captions, window, config):
     # Convert coordiates to image domain
     # TODO: better to keep them normalized until later
     height, width = config.IMAGE_SHAPE[:2]
+    rois *= np.array([height, width, height, width])
     # Clip boxes to image window
     refined_rois = clip_to_window(window, rois)
     # Round and cast to int since we're deadling with pixels now
@@ -1874,6 +1875,8 @@ class DenseImageCapRCNN:
             final_rois, final_captions = self.unmold_generations(generations[i],
                                                                  image.shape,
                                                                  windows[i])
+            final_captions = final_captions.reshape((final_captions.shape[0],
+                                                     self.config.PADDING_SIZE, self.config.EMBEDDING_SIZE))
             results.append({
                 "rois": final_rois,
                 "captions": final_captions
