@@ -5,6 +5,7 @@ import skimage.io
 import dense_model as modellib
 from train_dense_captions import DenseCapConfig
 from preprocess import decode_caption, load_embeddings
+from gensim.models import KeyedVectors
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
@@ -47,7 +48,10 @@ image = skimage.io.imread(os.path.join(IMAGE_DIR, file_name))
 results = model.generate_captions([image], verbose=1)
 
 # load word embeddings
-word_embeddings = load_embeddings('dataset/glove.6B.100d.txt')
+glove_file = 'dataset/glove.6B.100d.txt'
+word2vec_file = 'dataset/glove.6B.100d.txt.word2vec'
+# word_embeddings = load_embeddings(glove_file)
+word_embeddings = KeyedVectors.load_word2vec_format(word2vec_file, binary=False)
 
 # Visualize results
 print(file_name)

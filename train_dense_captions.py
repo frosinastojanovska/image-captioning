@@ -10,6 +10,7 @@ import utils
 from config import Config
 import dense_model as modellib
 from preprocess import encode_caption, load_embeddings
+from gensim.models import KeyedVectors
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
@@ -119,6 +120,8 @@ if __name__ == '__main__':
     data_directory = 'dataset/visual genome/'
     image_meta_file_path = 'dataset/image_data.json'
     data_file_path = 'dataset/region_descriptions.json'
+    glove_file = 'dataset/glove.6B.100d.txt'
+    word2vec_file = 'dataset/glove.6B.100d.txt.word2vec'
 
     with open(image_meta_file_path, 'r', encoding='utf-8') as file:
         image_meta_data = json.loads(file.read())
@@ -129,7 +132,11 @@ if __name__ == '__main__':
     test_image_ids = image_ids_list[6:8]
 
     # load word embeddings
-    word_embeddings = load_embeddings('dataset/glove.6B.100d.txt')
+    # word_embeddings = load_embeddings(glove_file)
+    if not os.path.exists(word2vec_file):
+        from gensim.scripts.glove2word2vec import glove2word2vec
+        glove2word2vec(glove_file, word2vec_file)
+    word_embeddings = KeyedVectors.load_word2vec_format(word2vec_file, binary=False)
 
     # Training dataset
     dataset_train = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE)
