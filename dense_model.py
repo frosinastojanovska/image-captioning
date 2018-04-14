@@ -763,7 +763,11 @@ def lstm_generator_graph(rois, feature_maps,
     rnn = KL.TimeDistributed(KL.LSTM(units=embedding_size, return_sequences=True, name='imgcap_lstm_lstm1'),
                              name='imgcap_lstm_td3')(td_r)
 
-    captions = KL.TimeDistributed(KL.Dense(embedding_size, activation='relu', name='imgcap_lstm_d1'), name='imgcap_lstm_td4')(rnn)
+    captions = KL.TimeDistributed(
+        KL.TimeDistributed(
+            KL.Dense(embedding_size, activation='relu', name='imgcap_lstm_d1'),
+        name='imgcap_lstm_td4'),
+    name='imgcap_lstm_td5')(rnn)
 
     # captions = np.array([[['']]] * rois.shape[0])
     # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
