@@ -12,6 +12,7 @@ import dense_model as modellib
 from preprocess import encode_caption, load_corpus
 from gensim.models import KeyedVectors
 from nltk.tokenize import word_tokenize
+import _pickle
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
@@ -27,7 +28,7 @@ class DenseCapConfig(Config):
     # Train on 1 GPU and 8 images per GPU. We can put multiple images on each
     # GPU because the images are small. Batch size is 8 (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 3
+    IMAGES_PER_GPU = 1
 
     STEPS_PER_EPOCH = 1000
     VALIDATION_STEPS = 50
@@ -154,8 +155,14 @@ if __name__ == '__main__':
     test_image_ids = image_ids_list[6:8]
 
     # load one-hot encodings
+    word_to_vector_file = '../dataset/word_to_vector.pickle'
+    id_to_word_file = '../dataset/id_to_word.pickle'
     tokens = tokenize_corpus(data_file_path, train_image_ids, val_image_ids)
     word_to_vector, id_to_word = load_corpus(list(tokens))
+    with open(word_to_vector_file, 'wb') as handle:
+        _pickle.dump(word_to_vector, handle)
+    with open(id_to_word_file, 'wb') as handle:
+        _pickle.dump(id_to_word, handle)
     config = DenseCapConfig(len(tokens))
     config.display()
 

@@ -4,7 +4,7 @@ import skimage.io
 
 import dense_model as modellib
 from train_dense_captions import DenseCapConfig
-from preprocess import decode_caption, load_embeddings
+from preprocess import decode_caption, load_embeddings, load_embeddings_model
 from gensim.models import KeyedVectors
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -19,7 +19,7 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 MODEL_PATH = os.path.join(ROOT_DIR, "img_cap_dense.h5")
 
 # Directory of images to run detection on
-IMAGE_DIR = os.path.join(ROOT_DIR, "dataset/visual genome")
+IMAGE_DIR = os.path.join(ROOT_DIR, "../dataset/visual genome")
 
 
 class InferenceConfig(DenseCapConfig):
@@ -48,10 +48,10 @@ image = skimage.io.imread(os.path.join(IMAGE_DIR, file_name))
 results = model.generate_captions([image], verbose=1)
 
 # load word embeddings
-glove_file = 'dataset/glove.6B.100d.txt'
-word2vec_file = 'dataset/glove.6B.100d.txt.word2vec'
+glove_file = '../dataset/glove.6B.100d.txt'
+word2vec_file = '../dataset/glove.6B.100d.txt.word2vec'
 # word_embeddings = load_embeddings(glove_file)
-word_embeddings = KeyedVectors.load_word2vec_format(word2vec_file, binary=False)
+word_embeddings = load_embeddings_model(glove_file, word2vec_file)
 
 # Visualize results
 print(file_name)
