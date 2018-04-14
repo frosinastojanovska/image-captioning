@@ -9,7 +9,7 @@ from keras.preprocessing.sequence import pad_sequences
 import utils
 from config import Config
 import dense_model as modellib
-from preprocess import encode_caption, load_embeddings
+from preprocess import encode_caption, load_embeddings, load_embeddings_model
 from gensim.models import KeyedVectors
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -46,20 +46,26 @@ class VisualGenomeDataset(utils.Dataset):
 
     def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
         with open(data_file, 'r', encoding='utf-8') as doc:
-            data = json.loads(doc.read())
+            img_data = json.loads(doc.read())
+        data = dict()
+        for x in img_data:
+            data[x['id']] = x['regions']
 
         with open(image_meta_file, 'r', encoding='utf-8') as doc:
-            image_meta = json.loads(doc.read())
+            img_meta = json.loads(doc.read())
+        image_meta = dict()
+        for x in img_meta:
+            image_meta[x['image_id']] = x
 
         # Add images
         for i in image_ids:
-            captions = [[d['phrase']] for d in data[i - 1]['regions']]
+            captions = [[d['phrase']] for d in data[i]]
             self.add_image(
                 "VisualGenome", image_id=i,
                 path=os.path.join(data_dir, '{}.jpg'.format(i)),
-                width=image_meta[i-1]['width'],
-                height=image_meta[i-1]['height'],
-                rois=[[d['y'], d['x'], d['y'] + d['height'], d['x'] + d['width']] for d in data[i-1]['regions']],
+                width=image_meta[i]['width'],
+                height=image_meta[i]['height'],
+                rois=[[d['y'], d['x'], d['y'] + d['height'], d['x'] + d['width']] for d in data[i]],
                 captions=captions
             )
 
@@ -127,16 +133,15 @@ if __name__ == '__main__':
         image_meta_data = json.loads(file.read())
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
-    train_image_ids = image_ids_list[54:56]
-    val_image_ids = [62, 65]  # image_ids_list[5:6]
+    image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
+
+    train_image_ids = image_ids[:85]
+    val_image_ids = image_ids[85:]  # image_ids_list[5:6]
     test_image_ids = image_ids_list[6:8]
 
     # load word embeddings
     # word_embeddings = load_embeddings(glove_file)
-    if not os.path.exists(word2vec_file):
-        from gensim.scripts.glove2word2vec import glove2word2vec
-        glove2word2vec(glove_file, word2vec_file)
-    word_embeddings = KeyedVectors.load_word2vec_format(word2vec_file, binary=False)
+    word_embeddings = load_embeddings_model(glove_file, word2vec_file)
 
     # Training dataset
     dataset_train = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE)
