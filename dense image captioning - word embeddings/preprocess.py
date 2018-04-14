@@ -30,7 +30,7 @@ def load_embeddings_model(glove_file, word2vec_file):
 
 
 def encode_caption(caption, model):
-    """ convert caption from string to word embedding or one hot array """
+    """ convert caption from string to word embedding """
     tokens = word_tokenize(caption.lower())
     vector = list()
     for token in tokens:
