@@ -4,6 +4,8 @@ import numpy as np
 from scipy.spatial import distance
 import os
 from gensim.models import KeyedVectors
+from keras.utils import to_categorical
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 
 
 def load_embeddings(file_name):
@@ -19,17 +21,25 @@ def load_embeddings(file_name):
     return embeddings
 
 
+def load_embeddings_model(glove_file, word2vec_file):
+    if not os.path.exists(word2vec_file):
+        from gensim.scripts.glove2word2vec import glove2word2vec
+        glove2word2vec(glove_file, word2vec_file)
+    word_embeddings = KeyedVectors.load_word2vec_format(word2vec_file, binary=False)
+    return word_embeddings
+
+
 def encode_caption(caption, model):
-    """ convert caption from string to word embedding array """
+    """ convert caption from string to word embedding or one hot array """
     tokens = word_tokenize(caption.lower())
     vector = list()
     for token in tokens:
-        encoded_token = encode_word(token, model)
+        encoded_token = encode_word_embedding(token, model)
         vector.append(encoded_token)
     return np.array(vector)
 
 
-def encode_word(word, model):
+def encode_word_embedding(word, model):
     """ convert word to its word embedding vector """
     if word in model.wv.vocab:
         vec = model[word]
@@ -74,13 +84,14 @@ def decode_word(vec, model):
 
 
 if __name__ == '__main__':
-    glove_file = 'dataset/glove.6B.100d.txt'
-    word2vec_file = 'dataset/glove.6B.100d.txt.word2vec'
+    glove_file = '../dataset/glove.6B.100d.txt'
+    word2vec_file = '../dataset/glove.6B.100d.txt.word2vec'
     if not os.path.exists(word2vec_file):
         from gensim.scripts.glove2word2vec import glove2word2vec
         glove2word2vec(glove_file, word2vec_file)
     model = KeyedVectors.load_word2vec_format(word2vec_file, binary=False)
     # word_embeddings = load_embeddings(glove_file)
+
     print('===Encode===')
     encoded_caption = encode_caption('Helloo world', model)
     print(encoded_caption)

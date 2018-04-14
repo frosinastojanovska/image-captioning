@@ -119,15 +119,15 @@ if __name__ == '__main__':
     MODEL_DIR = os.path.join(ROOT_DIR, "logs_dense_img_cap")
 
     # Local path to trained weights file
-    COCO_MODEL_PATH = os.path.join(ROOT_DIR, "rcnn_coco.h5")
+    COCO_MODEL_PATH = os.path.join(ROOT_DIR, "../rcnn_coco.h5")
     config = DenseCapConfig()
     config.display()
 
-    data_directory = 'dataset/visual genome/'
-    image_meta_file_path = 'dataset/image_data.json'
-    data_file_path = 'dataset/region_descriptions.json'
-    glove_file = 'dataset/glove.6B.100d.txt'
-    word2vec_file = 'dataset/glove.6B.100d.txt.word2vec'
+    data_directory = '../dataset/visual genome/'
+    image_meta_file_path = '../dataset/image_data.json'
+    data_file_path = '../dataset/region_descriptions.json'
+    glove_file = '../dataset/glove.6B.100d.txt'
+    word2vec_file = '../dataset/glove.6B.100d.txt.word2vec'
 
     with open(image_meta_file_path, 'r', encoding='utf-8') as file:
         image_meta_data = json.loads(file.read())
