@@ -150,8 +150,8 @@ if __name__ == '__main__':
 
     image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
 
-    train_image_ids = image_ids[:85]
-    val_image_ids = image_ids[85:]  # image_ids_list[5:6]
+    train_image_ids = image_ids[:900]
+    val_image_ids = image_ids[900:]  # image_ids_list[5:6]
     test_image_ids = image_ids_list[6:8]
 
     # load one-hot encodings

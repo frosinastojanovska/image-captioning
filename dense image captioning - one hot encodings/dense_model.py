@@ -760,7 +760,7 @@ def lstm_generator_graph(rois, feature_maps,
 
     # v2
     td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
-    rnn = KL.TimeDistributed(KL.LSTM(units=vocabulary_size, return_sequences=True, name='imgcap_lstm_lstm1'),
+    rnn = KL.TimeDistributed(KL.LSTM(units=32, return_sequences=True, name='imgcap_lstm_lstm1'),
                              name='imgcap_lstm_td3')(td_r)
 
     captions = KL.TimeDistributed(
