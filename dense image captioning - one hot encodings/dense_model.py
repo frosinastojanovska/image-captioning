@@ -749,18 +749,14 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  LSTM text generator
 ############################################################
 def lstm_generator_graph(rois, feature_maps,
-                         image_shape, pool_size, vocabulary_size, padding_size):
+                         image_shape, pool_size, vocabulary_size, padding_size, units):
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
                         name="roi_align_generator")([rois] + feature_maps)
     td = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
 
-    # v1
-    # rnn = KL.LSTM(units=vocabulary_size, return_sequences=True)(td)
-
-    # v2
     td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
-    rnn = KL.TimeDistributed(KL.LSTM(units=128, return_sequences=True, name='imgcap_lstm_lstm1'),
+    rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm1'),
                              name='imgcap_lstm_td3')(td_r)
 
     captions = KL.TimeDistributed(
@@ -1476,7 +1472,7 @@ class DenseImageCapRCNN:
             # TODO: verify that this handles zero padded ROIs
             img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
                                                     config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE, config.VOCABULARY_SIZE, config.PADDING_SIZE)
+                                                    config.POOL_SIZE, config.VOCABULARY_SIZE, config.PADDING_SIZE, 128)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
@@ -1504,7 +1500,8 @@ class DenseImageCapRCNN:
                                                     config.IMAGE_SHAPE,
                                                     config.POOL_SIZE,
                                                     config.VOCABULARY_SIZE,
-                                                    config.PADDING_SIZE)
+                                                    config.PADDING_SIZE,
+                                                    128)
 
             # Generations
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates

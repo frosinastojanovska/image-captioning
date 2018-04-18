@@ -150,8 +150,8 @@ if __name__ == '__main__':
 
     image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
 
-    train_image_ids = image_ids[:45]
-    val_image_ids = image_ids[45:]  # image_ids_list[5:6]
+    train_image_ids = image_ids[:90000]
+    val_image_ids = image_ids[90000:]  # image_ids_list[5:6]
     test_image_ids = image_ids_list[6:8]
 
     # load one-hot encodings
@@ -201,7 +201,7 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
-                epochs=15,
+                epochs=50,
                 layers="4+")
 
     end_time = time.time()
