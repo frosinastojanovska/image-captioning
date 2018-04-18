@@ -9,6 +9,7 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 
 
 def load_corpus(tokens):
+    tokens = ['<UNK>'] + tokens
     data = np.array([i for i in range(len(tokens))])
     #print(data)
     # one hot encode
@@ -40,7 +41,7 @@ def encode_word(word, word_to_vector):
     if word in word_to_vector.keys():
         vec = word_to_vector[word]
     else:
-        vec = np.zeros(len(word_to_vector.keys()))
+        vec = word_to_vector['<UNK>']
     return vec
 
 
@@ -61,7 +62,7 @@ def decode_word(vec, id_to_word):
 if __name__ == '__main__':
     one_hot_encodings, word_mappings = load_corpus(['hello', 'the', 'it', 'she', 'he', 'world', 'name', 'hi'])
     print('===Encode===')
-    encoded_caption = encode_caption('Hello world', one_hot_encodings)
+    encoded_caption = encode_caption('Hello world xxx', one_hot_encodings)
     print(encoded_caption)
     print('===Decode===')
     decoded_caption = decode_caption(encoded_caption, word_mappings)

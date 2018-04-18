@@ -4,8 +4,20 @@ import numpy as np
 from scipy.spatial import distance
 import os
 from gensim.models import KeyedVectors
-from keras.utils import to_categorical
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+
+
+def append_unknown_token(from_file_name, to_file_name):
+    with open(from_file_name, 'r', encoding='utf-8') as f, open(to_file_name, 'w', encoding='utf-8') as t:
+        t.write('<UNK> ')
+        for i in range(100):
+            if i < 99:
+                t.write('0 ')
+            else:
+                t.write('0\n')
+        line = f.readline()
+        while line != '':
+            t.write(line)
+            line = f.readline()
 
 
 def load_embeddings(file_name):
@@ -34,17 +46,17 @@ def encode_caption(caption, model):
     tokens = word_tokenize(caption.lower())
     vector = list()
     for token in tokens:
-        encoded_token = encode_word_embedding(token, model)
+        encoded_token = encode_word(token, model)
         vector.append(encoded_token)
     return np.array(vector)
 
 
-def encode_word_embedding(word, model):
+def encode_word(word, model):
     """ convert word to its word embedding vector """
     if word in model.wv.vocab:
         vec = model[word]
     else:
-        vec = np.zeros(100)
+        vec = model['<UNK>']
     '''
     if word in embeddings.keys():
         vec = embeddings[word]
@@ -70,22 +82,23 @@ def decode_caption(vector, model):
 
 def decode_word(vec, model):
     """ convert word embedding vector to the corresponding word """
-    # word = ''
-    word = model.most_similar(positive=[vec], negative=[], topn=1)
-    '''
-    min_distance = 999
-    for key in embeddings.keys():
-        dist = distance.euclidean(embeddings[key], vec)
-        if dist < min_distance:
-            min_distance = dist
-            word = key
-    '''
-    return word[0][0]
+    if np.all(vec == 0):
+        word = '<UNK>'
+    else:
+        word = model.most_similar(positive=[vec], negative=[], topn=1)
+        if word[0][1] < 0.5:
+            word = '<UNK>'
+        else:
+            word = word[0][0]
+    return word
 
 
 if __name__ == '__main__':
+    original_glove_file = '../dataset/original_glove.6B.100d.txt'
     glove_file = '../dataset/glove.6B.100d.txt'
     word2vec_file = '../dataset/glove.6B.100d.txt.word2vec'
+    if not os.path.exists(glove_file):
+        append_unknown_token(original_glove_file, glove_file)
     if not os.path.exists(word2vec_file):
         from gensim.scripts.glove2word2vec import glove2word2vec
         glove2word2vec(glove_file, word2vec_file)
@@ -93,7 +106,7 @@ if __name__ == '__main__':
     # word_embeddings = load_embeddings(glove_file)
 
     print('===Encode===')
-    encoded_caption = encode_caption('Helloo world', model)
+    encoded_caption = encode_caption('Helloo world xxx', model)
     print(encoded_caption)
     print('===Decode===')
     decoded_caption = decode_caption(encoded_caption, model)

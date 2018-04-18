@@ -760,20 +760,22 @@ def lstm_generator_graph(rois, feature_maps,
 
     # v2
     td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
-    rnn = KL.TimeDistributed(KL.LSTM(units=32, return_sequences=True, name='imgcap_lstm_lstm1'),
+    rnn = KL.TimeDistributed(KL.LSTM(units=128, return_sequences=True, name='imgcap_lstm_lstm1'),
                              name='imgcap_lstm_td3')(td_r)
 
     captions = KL.TimeDistributed(
         KL.TimeDistributed(
-            KL.Dense(embedding_size, activation='relu', name='imgcap_lstm_d1'),
+            KL.Dense(embedding_size, activation='linear', name='imgcap_lstm_d1'),
         name='imgcap_lstm_td4'),
     name='imgcap_lstm_td5')(rnn)
+
+    normalized_captions = KL.BatchNormalization(name='imgcap_lstm_batch_norm')(captions)
 
     # captions = np.array([[['']]] * rois.shape[0])
     # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
     # s = K.int_shape(captions)
     # captions = KL.TimeDistributed(KL.Lambda(lambda y: y, output_shape=s), dtype=captions.dtype)(captions)
-    return captions
+    return normalized_captions
 
 
 ############################################################
@@ -855,7 +857,7 @@ def imgcap_caption_loss_graph(target_captions, generated_captions):
     embedding_size = generated_captions.shape[-1]
     target_captions = tf.reshape(target_captions, [-1, embedding_size])
     generated_captions = tf.reshape(generated_captions, [-1, embedding_size])
-    loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)  # or 0 (distance should be calculated row-wise)
+    loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
     return loss
 
 
