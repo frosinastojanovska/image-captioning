@@ -749,23 +749,22 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  LSTM text generator
 ############################################################
 def lstm_generator_graph(rois, feature_maps,
-                         image_shape, pool_size, embedding_size, padding_size):
+                         image_shape, pool_size, embedding_size, padding_size, units, stacked=False):
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
                         name="roi_align_generator")([rois] + feature_maps)
     td = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
 
-    # v1
-    # rnn = KL.LSTM(units=embedding_size, return_sequences=True)(td)
-
-    # v2
     td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
-    rnn = KL.TimeDistributed(KL.LSTM(units=128, return_sequences=True, name='imgcap_lstm_lstm1'),
+    rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm1'),
                              name='imgcap_lstm_td3')(td_r)
+    if stacked:
+        rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm2'),
+                                 name='imgcap_lsrm_td6')(rnn)
 
     captions = KL.TimeDistributed(
         KL.TimeDistributed(
-            KL.Dense(embedding_size, activation='linear', name='imgcap_lstm_d1'),
+            KL.Dense(embedding_size, activation='tanh', name='imgcap_lstm_d1'),
         name='imgcap_lstm_td4'),
     name='imgcap_lstm_td5')(rnn)
 
@@ -857,7 +856,8 @@ def imgcap_caption_loss_graph(target_captions, generated_captions):
     embedding_size = generated_captions.shape[-1]
     target_captions = tf.reshape(target_captions, [-1, embedding_size])
     generated_captions = tf.reshape(generated_captions, [-1, embedding_size])
-    loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
+    # loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
+    loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)
     return loss
 
 
@@ -1478,7 +1478,8 @@ class DenseImageCapRCNN:
             # TODO: verify that this handles zero padded ROIs
             img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
                                                     config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE, config.EMBEDDING_SIZE, config.PADDING_SIZE)
+                                                    config.POOL_SIZE, config.EMBEDDING_SIZE, config.PADDING_SIZE,
+                                                    128, False)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
@@ -1506,7 +1507,9 @@ class DenseImageCapRCNN:
                                                     config.IMAGE_SHAPE,
                                                     config.POOL_SIZE,
                                                     config.EMBEDDING_SIZE,
-                                                    config.PADDING_SIZE)
+                                                    config.PADDING_SIZE,
+                                                    128,
+                                                    False)
 
             # Generations
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates

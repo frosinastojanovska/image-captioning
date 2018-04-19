@@ -135,8 +135,8 @@ if __name__ == '__main__':
 
     image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
 
-    train_image_ids = image_ids[:45]
-    val_image_ids = image_ids[45:]  # image_ids_list[5:6]
+    train_image_ids = image_ids[:90000]
+    val_image_ids = image_ids[90000:]  # image_ids_list[5:6]
     test_image_ids = image_ids_list[6:8]
 
     # load word embeddings
