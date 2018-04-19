@@ -764,7 +764,7 @@ def lstm_generator_graph(rois, feature_maps,
 
     captions = KL.TimeDistributed(
         KL.TimeDistributed(
-            KL.Dense(embedding_size, activation='tanh', name='imgcap_lstm_d1'),
+            KL.Dense(embedding_size, activation='linear', name='imgcap_lstm_d1'),
         name='imgcap_lstm_td4'),
     name='imgcap_lstm_td5')(rnn)
 
