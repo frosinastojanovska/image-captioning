@@ -148,10 +148,10 @@ if __name__ == '__main__':
         image_meta_data = json.loads(file.read())
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
-    image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
+    # image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
 
-    train_image_ids = image_ids[:90000]
-    val_image_ids = image_ids[90000:]  # image_ids_list[5:6]
+    train_image_ids = image_ids_list[:90000]
+    val_image_ids = image_ids_list[90000:]  # image_ids_list[5:6]
     test_image_ids = image_ids_list[6:8]
 
     # load one-hot encodings
@@ -170,11 +170,11 @@ if __name__ == '__main__':
         with open(id_to_word_file, 'wb') as handle:
            _pickle.dump(id_to_word, handle, protocol=4)
     else:
-        word_to_vector_p1 = _pickle.load(open(word_to_vector_file_pt1, 'rb'))
-        word_to_vector_p2 = _pickle.load(open(word_to_vector_file_pt2, 'rb'))
+        word_to_vector_pt1 = _pickle.load(open(word_to_vector_file_pt1, 'rb'))
+        word_to_vector_pt2 = _pickle.load(open(word_to_vector_file_pt2, 'rb'))
         word_to_vector = dict()
-        word_to_vector.update(word_to_vector_file_pt1)
-        word_to_vector.update(word_to_vector_file_pt2)
+        word_to_vector.update(word_to_vector_pt1)
+        word_to_vector.update(word_to_vector_pt2)
         id_to_word = _pickle.load(open(id_to_word_file, 'rb'))
     config = DenseCapConfig(len(word_to_vector))
     config.display()
