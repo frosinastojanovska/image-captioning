@@ -1758,7 +1758,7 @@ class DenseImageCapRCNN:
             validation_steps=self.config.VALIDATION_STEPS,
             max_queue_size=100,
             workers=workers,
-            use_multiprocessing=True,
+            use_multiprocessing=False,
             verbose=1
         )
 

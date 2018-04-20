@@ -28,7 +28,7 @@ class DenseCapConfig(Config):
     # Train on 1 GPU and 8 images per GPU. We can put multiple images on each
     # GPU because the images are small. Batch size is 8 (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 3
+    IMAGES_PER_GPU = 1
 
     STEPS_PER_EPOCH = 1000
     VALIDATION_STEPS = 50
