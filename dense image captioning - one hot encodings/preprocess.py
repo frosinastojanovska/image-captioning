@@ -6,22 +6,17 @@ import os
 from gensim.models import KeyedVectors
 from keras.utils import to_categorical
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+import _pickle
 
 
 def load_corpus(tokens):
     tokens = ['<UNK>'] + tokens
-    data = np.array([i for i in range(len(tokens))])
-    #print(data)
-    # one hot encode
-    encoded = to_categorical(data)
-    #print(encoded)
-    # invert encoding
     word_to_vector = dict()
     id_to_word = dict()
     for i in range(len(tokens)):
-        #inverted = np.argmax(encoded[i])
-        #print(tokens[i], inverted, encoded[i])
-        word_to_vector[tokens[i]] = np.array(encoded[i])
+        array = np.zeros(len(tokens))
+        array[i] = 1
+        word_to_vector[tokens[i]] = array
         id_to_word[i] = tokens[i]
     return word_to_vector, id_to_word
 
@@ -61,6 +56,18 @@ def decode_word(vec, id_to_word):
 
 if __name__ == '__main__':
     one_hot_encodings, word_mappings = load_corpus(['hello', 'the', 'it', 'she', 'he', 'world', 'name', 'hi'])
+    with open('word_to_vector_pt1.pickle', 'wb') as handle:
+        _pickle.dump(dict(list(one_hot_encodings.items())[:int(len(one_hot_encodings) / 2)]), handle, protocol=4)
+    with open('word_to_vector_pt2.pickle', 'wb') as handle:
+        _pickle.dump(dict(list(one_hot_encodings.items())[int(len(one_hot_encodings) / 2):]), handle, protocol=4)
+    with open('id_to_word.pickle', 'wb') as handle:
+        _pickle.dump(word_mappings, handle, protocol=4)
+    one_hot_encodings_p1 = _pickle.load(open('word_to_vector_pt1.pickle', 'rb'))
+    one_hot_encodings_p2 = _pickle.load(open('word_to_vector_pt2.pickle', 'rb'))
+    one_hot_encodings = dict()
+    one_hot_encodings.update(one_hot_encodings_p1)
+    one_hot_encodings.update(one_hot_encodings_p2)
+    word_mappings = _pickle.load(open('id_to_word.pickle', 'rb'))
     print('===Encode===')
     encoded_caption = encode_caption('Hello world xxx', one_hot_encodings)
     print(encoded_caption)

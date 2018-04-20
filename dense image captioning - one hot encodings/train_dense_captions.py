@@ -155,17 +155,29 @@ if __name__ == '__main__':
     test_image_ids = image_ids_list[6:8]
 
     # load one-hot encodings
-    word_to_vector_file = '../dataset/word_to_vector.pickle'
+    word_to_vector_file_pt1 = '../dataset/word_to_vector_pt1.pickle'
+    word_to_vector_file_pt2 = '../dataset/word_to_vector_pt2.pickle'
     id_to_word_file = '../dataset/id_to_word.pickle'
-    tokens = tokenize_corpus(data_file_path, train_image_ids, val_image_ids)
-    word_to_vector, id_to_word = load_corpus(list(tokens))
-    with open(word_to_vector_file, 'wb') as handle:
-        _pickle.dump(word_to_vector, handle)
-    with open(id_to_word_file, 'wb') as handle:
-        _pickle.dump(id_to_word, handle)
+    if not os.path.exists(word_to_vector_file_pt1) \
+            or not os.path.exists(word_to_vector_file_pt2) \
+            or not os.path.exists(id_to_word_file):
+        tokens = tokenize_corpus(data_file_path, train_image_ids, val_image_ids)
+        word_to_vector, id_to_word = load_corpus(list(tokens))
+        with open(word_to_vector_file_pt1, 'wb') as handle:
+           _pickle.dump(dict(list(word_to_vector.items())[:int(len(word_to_vector) / 2)]), handle, protocol=4)
+        with open(word_to_vector_file_pt2, 'wb') as handle:
+           _pickle.dump(dict(list(word_to_vector.items())[int(len(word_to_vector) / 2):]), handle, protocol=4)
+        with open(id_to_word_file, 'wb') as handle:
+           _pickle.dump(id_to_word, handle, protocol=4)
+    else:
+        word_to_vector_p1 = _pickle.load(open(word_to_vector_file_pt1, 'rb'))
+        word_to_vector_p2 = _pickle.load(open(word_to_vector_file_pt2, 'rb'))
+        word_to_vector = dict()
+        word_to_vector.update(word_to_vector_file_pt1)
+        word_to_vector.update(word_to_vector_file_pt2)
+        id_to_word = _pickle.load(open(id_to_word_file, 'rb'))
     config = DenseCapConfig(len(word_to_vector))
     config.display()
-    print(config.VOCABULARY_SIZE)
 
     # Training dataset
     dataset_train = VisualGenomeDataset(word_to_vector, config.PADDING_SIZE)
