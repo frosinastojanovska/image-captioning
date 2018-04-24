@@ -43,9 +43,9 @@ class DenseCapConfig(Config):
 
 
 class VisualGenomeDataset(utils.Dataset):
-    def __init__(self, word_to_vector, padding_size):
+    def __init__(self, word_to_id, padding_size):
         super().__init__()
-        self.word_to_vector = word_to_vector
+        self.word_to_id = word_to_id
         self.padding_size = padding_size
 
     def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
@@ -96,13 +96,13 @@ class VisualGenomeDataset(utils.Dataset):
         captions = image_info['captions']
         caps = []
         for caption in captions:
-            caps.append(self.encode_region_caption(caption[0], self.word_to_vector))
+            caps.append(self.encode_region_caption(caption[0], self.word_to_id))
         captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
         return rois, captions
 
-    def encode_region_caption(self, caption, word_to_vector):
+    def encode_region_caption(self, caption, word_to_id):
         """ Convert caption to word embedding vector """
-        return encode_caption(caption, word_to_vector)
+        return encode_caption(caption, word_to_id)
 
 
 def tokenize_corpus(data_file, train, validation):
@@ -151,42 +151,52 @@ if __name__ == '__main__':
     # image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
 
     train_image_ids = image_ids_list[:90000]
-    val_image_ids = image_ids_list[90000:]  # image_ids_list[5:6]
-    test_image_ids = image_ids_list[6:8]
+    val_image_ids = image_ids_list[90000:100000]
+    test_image_ids = image_ids_list[100000:]
 
     # load one-hot encodings
-    word_to_vector_file_pt1 = '../dataset/word_to_vector_pt1.pickle'
-    word_to_vector_file_pt2 = '../dataset/word_to_vector_pt2.pickle'
+    # word_to_vector_file_pt1 = '../dataset/word_to_vector_pt1.pickle'
+    # word_to_vector_file_pt2 = '../dataset/word_to_vector_pt2.pickle'
     id_to_word_file = '../dataset/id_to_word.pickle'
+    word_to_id_file = '../dataset/word_to_id.pickle'
+    '''
     if not os.path.exists(word_to_vector_file_pt1) \
             or not os.path.exists(word_to_vector_file_pt2) \
             or not os.path.exists(id_to_word_file):
+    '''
+    if not os.path.exists(id_to_word_file) or not os.path.exists(word_to_id_file):
         tokens = tokenize_corpus(data_file_path, train_image_ids, val_image_ids)
-        word_to_vector, id_to_word = load_corpus(list(tokens))
+        # word_to_vector, id_to_word = load_corpus(list(tokens))
+        word_to_id, id_to_word = load_corpus(list(tokens))
+        '''
         with open(word_to_vector_file_pt1, 'wb') as handle:
            _pickle.dump(dict(list(word_to_vector.items())[:int(len(word_to_vector) / 2)]), handle, protocol=4)
         with open(word_to_vector_file_pt2, 'wb') as handle:
            _pickle.dump(dict(list(word_to_vector.items())[int(len(word_to_vector) / 2):]), handle, protocol=4)
+        '''
         with open(id_to_word_file, 'wb') as handle:
            _pickle.dump(id_to_word, handle, protocol=4)
+        with open(word_to_id_file, 'wb') as handle:
+            _pickle.dump(word_to_id, handle, protocol=4)
     else:
-        word_to_vector_pt1 = _pickle.load(open(word_to_vector_file_pt1, 'rb'))
-        word_to_vector_pt2 = _pickle.load(open(word_to_vector_file_pt2, 'rb'))
-        word_to_vector = dict()
-        word_to_vector.update(word_to_vector_pt1)
-        word_to_vector.update(word_to_vector_pt2)
+        # word_to_vector_pt1 = _pickle.load(open(word_to_vector_file_pt1, 'rb'))
+        # word_to_vector_pt2 = _pickle.load(open(word_to_vector_file_pt2, 'rb'))
+        # word_to_vector = dict()
+        # word_to_vector.update(word_to_vector_pt1)
+        # word_to_vector.update(word_to_vector_pt2)
         id_to_word = _pickle.load(open(id_to_word_file, 'rb'))
-    config = DenseCapConfig(len(word_to_vector))
+        word_to_id = _pickle.load(open(word_to_id_file, 'rb'))
+    config = DenseCapConfig(len(id_to_word))
     config.display()
 
     # Training dataset
-    dataset_train = VisualGenomeDataset(word_to_vector, config.PADDING_SIZE)
+    dataset_train = VisualGenomeDataset(word_to_id, config.PADDING_SIZE)
     dataset_train.load_visual_genome(data_directory, train_image_ids,
                                      image_meta_file_path, data_file_path)
     dataset_train.prepare()
 
     # Validation dataset
-    dataset_val = VisualGenomeDataset(word_to_vector, config.PADDING_SIZE)
+    dataset_val = VisualGenomeDataset(word_to_id, config.PADDING_SIZE)
     dataset_val.load_visual_genome(data_directory, val_image_ids,
                                    image_meta_file_path, data_file_path)
     dataset_val.prepare()
@@ -213,7 +223,7 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
-                epochs=50,
+                epochs=100,
                 layers="4+")
 
     end_time = time.time()

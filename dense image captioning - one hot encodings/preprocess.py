@@ -11,32 +11,41 @@ import _pickle
 
 def load_corpus(tokens):
     tokens = ['<UNK>'] + tokens
-    word_to_vector = dict()
+    # word_to_vector = dict()
     id_to_word = dict()
+    word_to_id = dict()
     for i in range(len(tokens)):
-        array = np.zeros(len(tokens))
-        array[i] = 1
-        word_to_vector[tokens[i]] = array
+        # array = np.zeros(len(tokens))
+        # array[i] = 1
+        # word_to_vector[tokens[i]] = array
         id_to_word[i] = tokens[i]
-    return word_to_vector, id_to_word
+        word_to_id[tokens[i]] = i
+    return word_to_id, id_to_word
+    # return word_to_vector, id_to_word
 
 
-def encode_caption(caption, word_to_vector):
+def encode_caption(caption, word_to_id):
     """ convert caption from string to one-hot array """
     tokens = word_tokenize(caption.lower())
     vector = list()
     for token in tokens:
-        encoded_token = encode_word(token, word_to_vector)
+        encoded_token = encode_word(token, word_to_id)
         vector.append(encoded_token)
     return np.array(vector)
 
 
-def encode_word(word, word_to_vector):
+def encode_word(word, word_to_id):
     """ convert word to its one-hot vector"""
-    if word in word_to_vector.keys():
-        vec = word_to_vector[word]
+    if word in word_to_id.keys():
+        # vec = word_to_vector[word]
+        pos = word_to_id[word]
+        vec = np.zeros(len(word_to_id))
+        vec[pos] = 1
     else:
-        vec = word_to_vector['<UNK>']
+        # vec = word_to_vector['<UNK>']
+        pos = word_to_id['<UNK>']
+        vec = np.zeros(len(word_to_id))
+        vec[pos] = 1
     return vec
 
 

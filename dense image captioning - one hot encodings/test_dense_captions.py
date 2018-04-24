@@ -34,12 +34,14 @@ class InferenceConfig(DenseCapConfig):
 
 
 # load one-hot encodings
-word_to_vector_file = '../dataset/word_to_vector.pickle'
+# word_to_vector_file = '../dataset/word_to_vector.pickle'
 id_to_word_file = '../dataset/id_to_word.pickle'
-word_to_vector = _pickle.load(open(word_to_vector_file, 'rb'))
+word_to_id_file = '../dataset/word_to_id.pickle'
+# word_to_vector = _pickle.load(open(word_to_vector_file, 'rb'))
 id_to_word = _pickle.load(open(id_to_word_file, 'rb'))
+word_to_id = _pickle.load(open(word_to_id_file, 'rb'))
 
-config = InferenceConfig(len(word_to_vector))
+config = InferenceConfig(len(word_to_id))
 config.display()
 
 # Create model object in inference mode.

@@ -136,8 +136,8 @@ if __name__ == '__main__':
     # image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
 
     train_image_ids = image_ids_list[:90000]
-    val_image_ids = image_ids_list[90000:]  # image_ids_list[5:6]
-    test_image_ids = image_ids_list[6:8]
+    val_image_ids = image_ids_list[90000:100000]
+    test_image_ids = image_ids_list[100000:]
 
     # load word embeddings
     # word_embeddings = load_embeddings(glove_file)
@@ -177,7 +177,7 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
-                epochs=15,
+                epochs=100,
                 layers="4+")
 
     end_time = time.time()
