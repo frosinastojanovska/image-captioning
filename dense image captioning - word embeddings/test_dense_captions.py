@@ -3,6 +3,7 @@ import random
 import skimage.io
 
 import dense_model as modellib
+from visualize import draw_boxes_and_captions
 from train_dense_captions import DenseCapConfig
 from preprocess import decode_caption, load_embeddings, load_embeddings_model
 from gensim.models import KeyedVectors
@@ -54,9 +55,8 @@ word2vec_file = '../dataset/glove.6B.100d.txt.word2vec'
 word_embeddings = load_embeddings_model(glove_file, word2vec_file)
 
 # Visualize results
-print(file_name)
-print(results)
 r = results[0]
-print(r['rois'])
+captions = []
 for caption in r['captions']:
-    print(decode_caption(caption, word_embeddings))
+    captions.append(decode_caption(caption, word_embeddings))
+draw_boxes_and_captions(image, r['rois'], captions, file_name)

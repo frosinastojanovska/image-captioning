@@ -3,9 +3,9 @@ import random
 import skimage.io
 
 import dense_model as modellib
+from visualize import draw_boxes_and_captions
 from train_dense_captions import DenseCapConfig
 from preprocess import decode_caption
-from gensim.models import KeyedVectors
 import _pickle
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -60,9 +60,8 @@ image = skimage.io.imread(os.path.join(IMAGE_DIR, file_name))
 results = model.generate_captions([image], verbose=1)
 
 # Visualize results
-print(file_name)
-print(results)
 r = results[0]
-print(r['rois'])
+captions = []
 for caption in r['captions']:
-    print(decode_caption(caption, id_to_word))
+    captions.append(decode_caption(caption, id_to_word))
+draw_boxes_and_captions(image, r['rois'], captions, file_name)

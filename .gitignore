@@ -158,3 +158,4 @@ dataset/**/*
 mask_rcnn_coco.h5
 rcnn_coco.h5
 img_cap_dense.h5
+result.png
