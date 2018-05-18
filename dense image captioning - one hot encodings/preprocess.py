@@ -1,3 +1,5 @@
+from builtins import print
+
 from nltk.tokenize import word_tokenize
 from textblob import Word
 import numpy as np
@@ -7,6 +9,8 @@ from gensim.models import KeyedVectors
 from keras.utils import to_categorical
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 import _pickle
+import json
+from collections import Counter
 
 
 def load_corpus(tokens):
@@ -22,6 +26,22 @@ def load_corpus(tokens):
         word_to_id[tokens[i]] = i
     return word_to_id, id_to_word
     # return word_to_vector, id_to_word
+
+
+def tokenize_corpus(data_file, train, validation):
+    with open(data_file, 'r', encoding='utf-8') as doc:
+        data = json.loads(doc.read())
+    corpus = list()
+    for x in data:
+        if x['id'] in train or x['id'] in validation:
+            regs = x['regions']
+            for reg in regs:
+                caption = reg['phrase']
+                tokens = word_tokenize(caption.lower())
+                for token in tokens:
+                    corpus.append(token)
+    frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
+    return set([x[0] for x in frequencies if x[1] >= 15])
 
 
 def encode_caption(caption, word_to_id):
@@ -54,6 +74,7 @@ def decode_caption(vector, id_to_word):
     caption = ''
     for v in vector:
         caption += decode_word(v, id_to_word) + ' '
+    print(caption)
     return caption
 
 

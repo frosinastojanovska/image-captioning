@@ -760,7 +760,7 @@ def lstm_generator_graph(rois, feature_maps,
                              name='imgcap_lstm_td3')(td_r)
     if stacked:
         rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm2'),
-                                 name='imgcap_lsrm_td6')(rnn)
+                                 name='imgcap_lstm_td6')(rnn)
 
     captions = KL.TimeDistributed(
         KL.TimeDistributed(
@@ -858,6 +858,11 @@ def imgcap_caption_loss_graph(target_captions, generated_captions):
     generated_captions = tf.reshape(generated_captions, [-1, embedding_size])
     # loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
     loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)
+    # loss = keras.losses.cosine_proximity(target_captions, generated_captions)
+    # loss = keras.losses.logcosh(target_captions, generated_captions)
+    # loss = K.sqrt(K.sum(K.square(target_captions - generated_captions), axis=-1, keepdims=True))
+    # loss = keras.losses.sparse_categorical_crossentropy(target_captions, generated_captions)
+    # loss = keras.losses.hinge(target_captions, generated_captions)
     return loss
 
 
@@ -1723,6 +1728,8 @@ class DenseImageCapRCNN:
             "5+": r"(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
             # All layers
             "all": ".*",
+            # Only LSTM
+            "lstm_only": r"imgcap\_lstm.*",
         }
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
@@ -1761,12 +1768,13 @@ class DenseImageCapRCNN:
             initial_epoch=self.epoch,
             epochs=epochs,
             steps_per_epoch=self.config.STEPS_PER_EPOCH,
+            # steps_per_epoch=len(train_dataset.image_ids) // self.config.BATCH_SIZE,
             callbacks=callbacks,
             validation_data=next(val_generator),
             validation_steps=self.config.VALIDATION_STEPS,
             max_queue_size=100,
             workers=workers,
-            use_multiprocessing=True,
+            use_multiprocessing=False,
             verbose=1
         )
 

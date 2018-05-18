@@ -9,7 +9,7 @@ from keras.preprocessing.sequence import pad_sequences
 import utils
 from config import Config
 import dense_model as modellib
-from preprocess import encode_caption, load_corpus
+from preprocess import encode_caption, load_corpus, tokenize_corpus
 from gensim.models import KeyedVectors
 from nltk.tokenize import word_tokenize
 import _pickle
@@ -30,7 +30,7 @@ class DenseCapConfig(Config):
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
 
-    STEPS_PER_EPOCH = 1000
+    STEPS_PER_EPOCH = 500
     VALIDATION_STEPS = 50
 
     # Padding size
@@ -103,21 +103,6 @@ class VisualGenomeDataset(utils.Dataset):
     def encode_region_caption(self, caption, word_to_id):
         """ Convert caption to word embedding vector """
         return encode_caption(caption, word_to_id)
-
-
-def tokenize_corpus(data_file, train, validation):
-    with open(data_file, 'r', encoding='utf-8') as doc:
-        data = json.loads(doc.read())
-    corpus = set()
-    for x in data:
-        if x['id'] in train or x['id'] in validation:
-            regs = x['regions']
-            for reg in regs:
-                caption = reg['phrase']
-                tokens = word_tokenize(caption.lower())
-                for token in tokens:
-                    corpus.add(token)
-    return corpus
 
 
 if __name__ == '__main__':
@@ -223,8 +208,8 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
-                epochs=100,
-                layers="4+")
+                epochs=200,
+                layers="lstm_only")
 
     end_time = time.time()
     print(end_time - start_time)

@@ -77,6 +77,7 @@ def decode_caption(vector, model):
     caption = ''
     for v in vector:
         caption += decode_word(v, model) + ' '
+    print(caption)
     return caption
 
 

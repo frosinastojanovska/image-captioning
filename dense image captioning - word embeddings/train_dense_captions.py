@@ -28,7 +28,7 @@ class DenseCapConfig(Config):
     GPU_COUNT = 1
     IMAGES_PER_GPU = 3
 
-    STEPS_PER_EPOCH = 1000
+    STEPS_PER_EPOCH = 500
     VALIDATION_STEPS = 50
 
     # Embedding size
@@ -177,8 +177,8 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
-                epochs=100,
-                layers="4+")
+                epochs=200,
+                layers="lstm_only")
 
     end_time = time.time()
     print(end_time - start_time)

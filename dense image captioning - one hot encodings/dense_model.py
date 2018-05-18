@@ -749,7 +749,7 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  LSTM text generator
 ############################################################
 def lstm_generator_graph(rois, feature_maps,
-                         image_shape, pool_size, vocabulary_size, padding_size, units):
+                         image_shape, pool_size, vocabulary_size, padding_size, units, mode):
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
                         name="roi_align_generator")([rois] + feature_maps)
@@ -758,12 +758,25 @@ def lstm_generator_graph(rois, feature_maps,
     td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
     rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm1'),
                              name='imgcap_lstm_td3')(td_r)
-
     captions = KL.TimeDistributed(
         KL.TimeDistributed(
             KL.Dense(vocabulary_size, activation='relu', name='imgcap_lstm_d1'),
-        name='imgcap_lstm_td4'),
-    name='imgcap_lstm_td5')(rnn)
+            name='imgcap_lstm_td4'),
+        name='imgcap_lstm_td5')(rnn)
+    '''
+    if mode == 'training':
+        captions = KL.TimeDistributed(
+            KL.TimeDistributed(
+                KL.Dense(vocabulary_size, name='imgcap_lstm_d1'),
+                name='imgcap_lstm_td4'),
+            name='imgcap_lstm_td5')(rnn)
+    else:
+        captions = KL.TimeDistributed(
+            KL.TimeDistributed(
+                KL.Dense(vocabulary_size, activation='softmax', name='imgcap_lstm_d1'),
+                name='imgcap_lstm_td4'),
+            name='imgcap_lstm_td5')(rnn)
+    '''
 
     # captions = np.array([[['']]] * rois.shape[0])
     # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
@@ -851,7 +864,12 @@ def imgcap_caption_loss_graph(target_captions, generated_captions):
     vocabulary_size = generated_captions.shape[-1]
     target_captions = tf.reshape(target_captions, [-1, vocabulary_size])
     generated_captions = tf.reshape(generated_captions, [-1, vocabulary_size])
-    loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
+    # loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
+    # loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)
+    # loss = keras.losses.hinge(target_captions, generated_captions)
+    # loss = keras.losses.categorical_hinge(target_captions, generated_captions)
+    # loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_captions, logits=generated_captions)
+    loss = keras.losses.mean_squared_logarithmic_error(target_captions, generated_captions)
     return loss
 
 
@@ -1472,7 +1490,7 @@ class DenseImageCapRCNN:
             # TODO: verify that this handles zero padded ROIs
             img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
                                                     config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE, config.VOCABULARY_SIZE, config.PADDING_SIZE, 128)
+                                                    config.POOL_SIZE, config.VOCABULARY_SIZE, config.PADDING_SIZE, 128, mode)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
@@ -1501,7 +1519,8 @@ class DenseImageCapRCNN:
                                                     config.POOL_SIZE,
                                                     config.VOCABULARY_SIZE,
                                                     config.PADDING_SIZE,
-                                                    128)
+                                                    128,
+                                                    mode)
 
             # Generations
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
@@ -1587,7 +1606,7 @@ class DenseImageCapRCNN:
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        optimizer = keras.optimizers.Adam(lr=learning_rate, clipnorm=0.5, amsgrad=True)
+        optimizer = keras.optimizers.Adadelta(lr=learning_rate)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
@@ -1715,6 +1734,8 @@ class DenseImageCapRCNN:
             "5+": r"(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
             # All layers
             "all": ".*",
+            # Only LSTM
+            "lstm_only": r"imgcap\_lstm.*",
         }
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
@@ -1753,6 +1774,7 @@ class DenseImageCapRCNN:
             initial_epoch=self.epoch,
             epochs=epochs,
             steps_per_epoch=self.config.STEPS_PER_EPOCH,
+            # steps_per_epoch=len(train_dataset.image_ids) // self.config.BATCH_SIZE,
             callbacks=callbacks,
             validation_data=next(val_generator),
             validation_steps=self.config.VALIDATION_STEPS,
