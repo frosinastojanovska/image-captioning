@@ -756,8 +756,9 @@ def lstm_generator_graph(rois, feature_maps,
     td = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
 
     td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
+    mask = KL.TimeDistributed(KL.Masking(mask_value=0.0, name='imgcap_lstm_m1'), name='imgcap_lstm_td6')(td_r)
     rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm1'),
-                             name='imgcap_lstm_td3')(td_r)
+                             name='imgcap_lstm_td3')(mask)
     if stacked:
         rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm2'),
                                  name='imgcap_lstm_td6')(rnn)
