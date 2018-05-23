@@ -759,14 +759,14 @@ def lstm_generator_graph(rois, feature_maps,
     mask = KL.TimeDistributed(KL.Masking(mask_value=0.0, name='imgcap_lstm_m1'), name='imgcap_lstm_td6')(td_r)
     rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm1'),
                              name='imgcap_lstm_td3')(mask)
-    '''
+
     captions = KL.TimeDistributed(
         KL.TimeDistributed(
             KL.Dense(vocabulary_size, activation='relu', name='imgcap_lstm_d1'),
             name='imgcap_lstm_td4'),
         name='imgcap_lstm_td5')(rnn)
-    '''
 
+    '''
     if mode == 'training':
         captions = KL.TimeDistributed(
             KL.TimeDistributed(
@@ -779,7 +779,7 @@ def lstm_generator_graph(rois, feature_maps,
                 KL.Dense(vocabulary_size, activation='softmax', name='imgcap_lstm_d1'),
                 name='imgcap_lstm_td4'),
             name='imgcap_lstm_td5')(rnn)
-
+    '''
 
     # captions = np.array([[['']]] * rois.shape[0])
     # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
@@ -871,8 +871,8 @@ def imgcap_caption_loss_graph(target_captions, generated_captions):
     # loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)
     # loss = keras.losses.hinge(target_captions, generated_captions)
     # loss = keras.losses.categorical_hinge(target_captions, generated_captions)
-    loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_captions, logits=generated_captions)
-    # loss = keras.losses.mean_squared_logarithmic_error(target_captions, generated_captions)
+    # loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_captions, logits=generated_captions)
+    loss = keras.losses.mean_squared_logarithmic_error(target_captions, generated_captions)
     return loss
 
 

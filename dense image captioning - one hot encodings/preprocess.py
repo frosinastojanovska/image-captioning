@@ -41,7 +41,7 @@ def tokenize_corpus(data_file, train, validation):
                 for token in tokens:
                     corpus.append(token)
     frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
-    return set([x[0] for x in frequencies if x[1] >= 15])
+    return set([x[0] for x in frequencies if x[1] in range(15, 50000)])
 
 
 def encode_caption(caption, word_to_id):
