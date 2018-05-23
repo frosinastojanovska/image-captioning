@@ -11,6 +11,8 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 import _pickle
 import json
 from collections import Counter
+from nltk.corpus import stopwords
+from string import punctuation
 
 
 def load_corpus(tokens):
@@ -41,7 +43,9 @@ def tokenize_corpus(data_file, train, validation):
                 for token in tokens:
                     corpus.append(token)
     frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
-    return set([x[0] for x in frequencies if x[1] in range(15, 50000)])
+    return set([x[0] for x in frequencies if x[1] >= 15 and
+                x[0] not in punctuation and
+                x[0] not in set(stopwords.words('english'))])
 
 
 def encode_caption(caption, word_to_id):
