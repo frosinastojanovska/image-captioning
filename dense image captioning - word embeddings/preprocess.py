@@ -4,6 +4,8 @@ import numpy as np
 from scipy.spatial import distance
 import os
 from gensim.models import KeyedVectors
+import json
+from collections import Counter
 
 
 def append_unknown_token(from_file_name, to_file_name):
@@ -41,19 +43,35 @@ def load_embeddings_model(glove_file, word2vec_file):
     return word_embeddings
 
 
-def encode_caption(caption, model):
+def tokenize_corpus(data_file, train, validation):
+    with open(data_file, 'r', encoding='utf-8') as doc:
+        data = json.loads(doc.read())
+    corpus = list()
+    for x in data:
+        if x['id'] in train or x['id'] in validation:
+            regs = x['regions']
+            for reg in regs:
+                caption = reg['phrase']
+                tokens = word_tokenize(caption.lower())
+                for token in tokens:
+                    corpus.append(token)
+    frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
+    return set([x[0] for x in frequencies if x[1] in range(15, 50000)])
+
+
+def encode_caption(caption, model, vocabulary):
     """ convert caption from string to word embedding """
     tokens = word_tokenize(caption.lower())
     vector = list()
     for token in tokens:
-        encoded_token = encode_word(token, model)
+        encoded_token = encode_word(token, model, vocabulary)
         vector.append(encoded_token)
     return np.array(vector)
 
 
-def encode_word(word, model):
+def encode_word(word, model, vocabulary):
     """ convert word to its word embedding vector """
-    if word in model.wv.vocab:
+    if word in model.wv.vocab and word in vocabulary:
         vec = model[word]
     else:
         vec = model['<UNK>']

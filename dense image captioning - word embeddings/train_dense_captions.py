@@ -9,7 +9,7 @@ from keras.preprocessing.sequence import pad_sequences
 import utils
 from config import Config
 import dense_model as modellib
-from preprocess import encode_caption, load_embeddings, load_embeddings_model
+from preprocess import encode_caption, load_embeddings, load_embeddings_model, tokenize_corpus
 from gensim.models import KeyedVectors
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -39,10 +39,11 @@ class DenseCapConfig(Config):
 
 
 class VisualGenomeDataset(utils.Dataset):
-    def __init__(self, embeddings, padding_size):
+    def __init__(self, embeddings, padding_size, vocabulary):
         super().__init__()
         self.word_embeddings = embeddings
         self.padding_size = padding_size
+        self.vocabulary = vocabulary
 
     def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
         with open(data_file, 'r', encoding='utf-8') as doc:
@@ -92,13 +93,13 @@ class VisualGenomeDataset(utils.Dataset):
         captions = image_info['captions']
         caps = []
         for caption in captions:
-            caps.append(self.encode_region_caption(caption[0], self.word_embeddings))
+            caps.append(self.encode_region_caption(caption[0], self.word_embeddings, self.vocabulary))
         captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
         return rois, captions
 
-    def encode_region_caption(self, caption, embeddings):
+    def encode_region_caption(self, caption, embeddings, vocabulary):
         """ Convert caption to word embedding vector """
-        return encode_caption(caption, embeddings)
+        return encode_caption(caption, embeddings, vocabulary)
 
 
 if __name__ == '__main__':
@@ -143,14 +144,17 @@ if __name__ == '__main__':
     # word_embeddings = load_embeddings(glove_file)
     word_embeddings = load_embeddings_model(glove_file, word2vec_file)
 
+    # load reduced vocabulary
+    vocabulary = tokenize_corpus(data_file_path, train_image_ids, val_image_ids)
+
     # Training dataset
-    dataset_train = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE)
+    dataset_train = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE, vocabulary)
     dataset_train.load_visual_genome(data_directory, train_image_ids,
                                      image_meta_file_path, data_file_path)
     dataset_train.prepare()
 
     # Validation dataset
-    dataset_val = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE)
+    dataset_val = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE, vocabulary)
     dataset_val.load_visual_genome(data_directory, val_image_ids,
                                    image_meta_file_path, data_file_path)
     dataset_val.prepare()
