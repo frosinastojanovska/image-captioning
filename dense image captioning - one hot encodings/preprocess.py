@@ -13,6 +13,7 @@ import json
 from collections import Counter
 from nltk.corpus import stopwords
 from string import punctuation
+import nltk
 
 
 def load_corpus(tokens):
@@ -40,8 +41,10 @@ def tokenize_corpus(data_file, train, validation):
             for reg in regs:
                 caption = reg['phrase']
                 tokens = word_tokenize(caption.lower())
-                for token in tokens:
-                    corpus.append(token)
+                tags = nltk.pos_tag(tokens)
+                for tag in tags:
+                    if tag[1].startswith('NN'):
+                        corpus.append(tag[0])
     frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
     return set([x[0] for x in frequencies if x[1] >= 15 and
                 x[0] not in punctuation and
@@ -54,7 +57,8 @@ def encode_caption(caption, word_to_id):
     vector = list()
     for token in tokens:
         encoded_token = encode_word(token, word_to_id)
-        vector.append(encoded_token)
+        if len(encoded_token) != 0:
+            vector.append(encoded_token)
     return np.array(vector)
 
 
@@ -66,10 +70,13 @@ def encode_word(word, word_to_id):
         vec = np.zeros(len(word_to_id))
         vec[pos] = 1
     else:
+        '''
         # vec = word_to_vector['<UNK>']
         pos = word_to_id['<UNK>']
         vec = np.zeros(len(word_to_id))
         vec[pos] = 1
+        '''
+        vec = []
     return vec
 
 

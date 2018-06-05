@@ -8,6 +8,7 @@ import json
 from collections import Counter
 from nltk.corpus import stopwords
 from string import punctuation
+import nltk
 
 
 def append_unknown_token(from_file_name, to_file_name):
@@ -45,6 +46,16 @@ def load_embeddings_model(glove_file, word2vec_file):
     return word_embeddings
 
 
+def reduce_embeddings(vocabulary, original_glove_file, glove_file):
+    with open(original_glove_file, 'r', encoding='utf-8') as f, open(glove_file, 'w', encoding='utf-8') as t:
+        line = f.readline()
+        while line != '':
+            parts = line.split(' ')
+            if parts[0] in vocabulary or parts[0] == '<UNK>':
+                t.write(line)
+            line = f.readline()
+
+
 def tokenize_corpus(data_file, train, validation):
     with open(data_file, 'r', encoding='utf-8') as doc:
         data = json.loads(doc.read())
@@ -55,8 +66,10 @@ def tokenize_corpus(data_file, train, validation):
             for reg in regs:
                 caption = reg['phrase']
                 tokens = word_tokenize(caption.lower())
-                for token in tokens:
-                    corpus.append(token)
+                tags = nltk.pos_tag(tokens)
+                for tag in tags:
+                    if tag[1].startswith('NN'):
+                        corpus.append(tag[0])
     frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
     return set([x[0] for x in frequencies if x[1] >= 15 and
                 x[0] not in punctuation and
@@ -69,7 +82,8 @@ def encode_caption(caption, model, vocabulary):
     vector = list()
     for token in tokens:
         encoded_token = encode_word(token, model, vocabulary)
-        vector.append(encoded_token)
+        if len(encoded_token) != 0:
+            vector.append(encoded_token)
     return np.array(vector)
 
 
@@ -78,7 +92,8 @@ def encode_word(word, model, vocabulary):
     if word in model.wv.vocab and word in vocabulary:
         vec = model[word]
     else:
-        vec = model['<UNK>']
+        # vec = model['<UNK>']
+        vec = []
     '''
     if word in embeddings.keys():
         vec = embeddings[word]

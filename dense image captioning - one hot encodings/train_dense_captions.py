@@ -34,7 +34,7 @@ class DenseCapConfig(Config):
     VALIDATION_STEPS = 50
 
     # Padding size
-    PADDING_SIZE = 15
+    PADDING_SIZE = 10
 
     def __init__(self, vocab_size):
         super().__init__()
@@ -92,12 +92,17 @@ class VisualGenomeDataset(utils.Dataset):
         """Generate instance masks for shapes of the given image ID.
         """
         image_info = self.image_info[image_id]
-        rois = np.array(image_info['rois'])
-        captions = image_info['captions']
+        # rois = np.array(image_info['rois'])
+        # captions = image_info['captions']
+        rois = []
         caps = []
-        for caption in captions:
-            caps.append(self.encode_region_caption(caption[0], self.word_to_id))
+        for roi, caption in zip(image_info['rois'], image_info['captions']):
+            cap = self.encode_region_caption(caption[0], self.word_to_id)
+            if cap.size != 0:
+                rois.append(roi)
+                caps.append(cap)
         captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
+        rois = np.array(rois)
         return rois, captions
 
     def encode_region_caption(self, caption, word_to_id):
@@ -208,7 +213,7 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
-                epochs=200,
+                epochs=250,
                 layers="lstm_only")
 
     end_time = time.time()
