@@ -1043,7 +1043,7 @@ def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
     anchor_iou_max = overlaps[np.arange(overlaps.shape[0]), anchor_iou_argmax]
     rpn_match[(anchor_iou_max < 0.3)] = -1
     # 2. Set an anchor for each GT box (regardless of IoU value).
-    gt_iou_argmax = np.argwhere(overlaps == np.amax(overlaps, axis=0))
+    gt_iou_argmax = np.argwhere(overlaps == np.amax(overlaps, axis=0))[:, 0]
     rpn_match[gt_iou_argmax] = 1
     # 3. Set anchors with high overlap as positive.
     rpn_match[anchor_iou_max >= 0.7] = 1
