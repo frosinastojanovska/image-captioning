@@ -616,33 +616,44 @@ def refine_generations(rois, captions, window, config):
         window: (y1, x1, y2, x2) in image coordinates. The part of the image
             that contains the image excluding the padding.
 
-    Returns detections shaped: [N, (y1, x1, y2, x2, embeddings)]
+    Returns generations shaped: [N, (y1, x1, y2, x2, embeddings)]
     """
-    # Convert coordiates to image domain
+    # Captions word IDs per ROI
+    word_probs = np.max(captions, axis=2)
+    word_probs_log = np.log(word_probs)
+    captions_scores = np.sum(word_probs_log, axis=1)
+    # Convert coordinates to image domain
     # TODO: better to keep them normalized until later
     height, width = config.IMAGE_SHAPE[:2]
     rois *= np.array([height, width, height, width])
     # Clip boxes to image window
     refined_rois = clip_to_window(window, rois)
-    # Round and cast to int since we're deadling with pixels now
+    # Round and cast to int since we're dealing with pixels now
     refined_rois = np.rint(refined_rois).astype(np.int32)
 
     # TODO: Filter out boxes with zero area
 
+    keep = utils.non_max_suppression(rois, captions_scores,
+                                     config.DETECTION_NMS_THRESHOLD)
+
+    # Keep top generations
+    roi_count = config.DETECTION_MAX_INSTANCES
+    top_ids = np.argsort(captions_scores[keep])[::-1][:roi_count]
+    keep = keep[top_ids]
+
     # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
     # Coordinates are in image domain.
-    result = np.hstack((refined_rois,
-                        captions.reshape(captions.shape[0], -1)))
+    result = np.hstack((refined_rois[keep],
+                        captions[keep].reshape(captions[keep].shape[0], -1)))
     return result
 
 
 class GenerationMatchLayer(KE.Layer):
-    # TODO: Check this, probably is going to fail
     """Takes proposal boxes with the generated captions and their bounding box deltas and
     returns the final detection boxes.
 
     Returns:
-    [batch, num_detections, (y1, x1, y2, x2, caption)] in pixels
+    [batch, num_generations, (y1, x1, y2, x2, caption)] in pixels
     """
 
     def __init__(self, config=None, **kwargs):
@@ -651,24 +662,17 @@ class GenerationMatchLayer(KE.Layer):
 
     def call(self, inputs):
         def wrapper(rois, img_cap_captions, image_meta):
-            detections_batch = []
+            generations_batch = []
             _, _, window = parse_image_meta(image_meta)
             for b in range(self.config.BATCH_SIZE):
                 generations = refine_generations(rois[b], img_cap_captions[b], window[b], self.config)
-                # Pad with zeros if detections < DETECTION_MAX_INSTANCES
-                # gap = self.config.DETECTION_MAX_INSTANCES - generations.shape[0]
-                # assert gap >= 0
-                # if gap > 0:
-                #     generations = np.pad(
-                #         generations, [(0, gap), (0, 0)], 'constant', constant_values=0)
-                detections_batch.append(generations)
+                generations_batch.append(generations)
 
-            # Stack detections and cast to float32
+            # Stack generations and cast to float32
             # TODO: track where float64 is introduced
-            detections_batch = np.array(detections_batch).astype(np.float32)
-            # Reshape output
-            # [batch, num_detections, (y1, x1, y2, x2, class_score)] in pixels
-            return detections_batch # np.reshape(detections_batch, [self.config.BATCH_SIZE, self.config.DETECTION_MAX_INSTANCES, 6])
+            generations_batch = np.array(generations_batch).astype(np.float32)
+
+            return generations_batch
 
         # Return wrapped function
         return tf.py_func(wrapper, inputs, tf.float32)
@@ -1252,7 +1256,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
 
             # RPN Targets
             rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors,
-                                          gt_captions, gt_boxes, config)
+                                                    gt_captions, gt_boxes, config)
 
             # Image Caption R-CNN Targets
             if random_rois:
@@ -1486,14 +1490,14 @@ class DenseImageCapRCNN:
                 DetectionTargetLayer(config, name="proposal_targets")([
                     target_rois, input_gt_captions, gt_boxes])
 
-            # TODO: clean up (use tf.identify if necessary)
-            output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
-
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
             img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
                                                     config.IMAGE_SHAPE,
                                                     config.POOL_SIZE, config.VOCABULARY_SIZE, config.PADDING_SIZE, 128, mode)
+
+            # TODO: clean up (use tf.identify if necessary)
+            output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
@@ -1529,6 +1533,14 @@ class DenseImageCapRCNN:
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
             generations = GenerationMatchLayer(config, name="mrcnn_detection")(
                 [rpn_rois, img_cap_captions, input_image_meta])
+
+            # Convert boxes to normalized coordinates
+            # TODO: let DetectionLayer return normalized coordinates to avoid
+            #       unnecessary conversions
+            h, w = config.IMAGE_SHAPE[:2]
+            generation_boxes = KL.Lambda(
+                lambda x: x[..., :4] / np.array([h, w, h, w]))(generations)
+
             model = KM.Model([input_image, input_image_meta],
                              [generations, img_cap_captions,
                               rpn_rois, rpn_class, rpn_bbox],
@@ -1728,7 +1740,6 @@ class DenseImageCapRCNN:
 
         # Pre-defined layer regular expressions
         layer_regex = {
-            # TODO: change this to remove fpn and add name for the lstm layers
             # all layers but the backbone
             "no_backbone": r"(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
             # From a specific Resnet stage and up
@@ -1826,7 +1837,7 @@ class DenseImageCapRCNN:
         return molded_images, image_metas, windows
 
     def unmold_generations(self, generations, image_shape, window):
-        """Reformats the detections of one image from the format of the neural
+        """Reformats the generations of one image from the format of the neural
         network output to a format suitable for use in the rest of the
         application.
 
@@ -1839,11 +1850,6 @@ class DenseImageCapRCNN:
         boxes: [N, (y1, x1, y2, x2)] Bounding boxes in pixels
         captions: [N] string caption for each bounding box
         """
-        # How many detections do we have?
-        # Detections array is padded with zeros. Find the first caption == ''.
-        # zero_ix = np.where(generations[:, 4] == '')[0]
-        # n = zero_ix[0] if zero_ix.shape[0] > 0 else generations.shape[0]
-
         # Extract boxes, and image captions
         boxes = generations[:, :4]
         image_captions = generations[:, 4:]
@@ -1895,7 +1901,7 @@ class DenseImageCapRCNN:
         generations, img_cap_captions, \
             rpn_rois, rpn_class, rpn_bbox = \
             self.keras_model.predict([molded_images, image_metas], verbose=0)
-        # Process detections
+        # Process generations
         results = []
         for i, image in enumerate(images):
             final_rois, final_captions = self.unmold_generations(generations[i],

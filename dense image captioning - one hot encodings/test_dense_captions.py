@@ -1,6 +1,8 @@
 import os
+import json
 import random
 import skimage.io
+import numpy as np
 
 import dense_model as modellib
 from visualize import draw_boxes_and_captions
@@ -56,6 +58,22 @@ file_names = next(os.walk(IMAGE_DIR))[2]
 file_name = random.choice(file_names)
 image = skimage.io.imread(os.path.join(IMAGE_DIR, file_name))
 
+data_file_path = '../dataset/region_descriptions.json'
+
+with open(data_file_path, 'r', encoding='utf-8') as doc:
+    img_data = json.loads(doc.read())
+
+data = []
+i = int(file_name.split('.jpg')[0])
+
+for x in img_data:
+    if x['id'] == i:
+        data = x['regions']
+        break
+
+ground_truth_captions = [[d['phrase']] for d in data]
+ground_truth_rois = np.array([[d['y'], d['x'], d['y'] + d['height'], d['x'] + d['width']] for d in data])
+
 # Run detection
 results = model.generate_captions([image], verbose=1)
 
@@ -64,4 +82,5 @@ r = results[0]
 captions = []
 for caption in r['captions']:
     captions.append(decode_caption(caption, id_to_word))
+# draw_boxes_and_captions(image, ground_truth_rois, ground_truth_captions, file_name)
 draw_boxes_and_captions(image, r['rois'], captions, file_name)
