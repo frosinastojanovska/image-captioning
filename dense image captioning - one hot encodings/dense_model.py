@@ -464,7 +464,7 @@ def detection_targets_graph(proposals, gt_captions, gt_boxes, config):
     rois: [TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized coordinates
     captions: [TRAIN_ROIS_PER_IMAGE, word embeddings]. Captions word embeddings.
     deltas: [TRAIN_ROIS_PER_IMAGE, (dy, dx, log(dh), log(dw))]
-            Class-specific bbox refinments.
+            bbox refinments.
 
     Note: Returned arrays might be zero padded if not enough target ROIs.
     """
@@ -482,24 +482,8 @@ def detection_targets_graph(proposals, gt_captions, gt_boxes, config):
     gt_captions = tf.boolean_mask(gt_captions, non_zeros,
                                   name="trim_gt_captions")
 
-    # # Handle COCO crowds
-    # # A crowd box in COCO is a bounding box around several instances. Exclude
-    # # them from training. A crowd box is given a negative class ID.
-    # crowd_ix = tf.where(gt_class_ids < 0)[:, 0]
-    # non_crowd_ix = tf.where(gt_class_ids > 0)[:, 0]
-    # crowd_boxes = tf.gather(gt_boxes, crowd_ix)
-    # crowd_masks = tf.gather(gt_masks, crowd_ix, axis=2)
-    # gt_class_ids = tf.gather(gt_class_ids, non_crowd_ix)
-    # gt_boxes = tf.gather(gt_boxes, non_crowd_ix)
-    # gt_masks = tf.gather(gt_masks, non_crowd_ix, axis=2)
-
     # Compute overlaps matrix [proposals, gt_boxes]
     overlaps = overlaps_graph(proposals, gt_boxes)
-
-    # # Compute overlaps with crowd boxes [anchors, crowds]
-    # crowd_overlaps = overlaps_graph(proposals, crowd_boxes)
-    # crowd_iou_max = tf.reduce_max(crowd_overlaps, axis=1)
-    # no_crowd_bool = (crowd_iou_max < 0.001)
 
     # Determine positive and negative ROIs
     roi_iou_max = tf.reduce_max(overlaps, axis=1)
@@ -574,7 +558,7 @@ class DetectionTargetLayer(KE.Layer):
         gt_boxes = inputs[2]
 
         # Slice the batch and run a graph for each slice
-        names = ["rois", "target_captions", "target_bbox"]
+        names = ["rois", "target_captions", "target_deltas"]
         outputs = utils.batch_slice(
             [proposals, gt_captions, gt_boxes],
             lambda w, x, y: detection_targets_graph(
@@ -766,7 +750,7 @@ def lstm_generator_graph(rois, feature_maps,
 
     captions = KL.TimeDistributed(
         KL.TimeDistributed(
-            KL.Dense(vocabulary_size, activation='relu', name='imgcap_lstm_d1'),
+            KL.Dense(vocabulary_size, activation='softmax', name='imgcap_lstm_d1'),
             name='imgcap_lstm_td4'),
         name='imgcap_lstm_td5')(rnn)
 
@@ -785,10 +769,6 @@ def lstm_generator_graph(rois, feature_maps,
             name='imgcap_lstm_td5')(rnn)
     '''
 
-    # captions = np.array([[['']]] * rois.shape[0])
-    # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
-    # s = K.int_shape(captions)
-    # captions = KL.TimeDistributed(KL.Lambda(lambda y: y, output_shape=s), dtype=captions.dtype)(captions)
     return captions
 
 
@@ -831,11 +811,11 @@ def rpn_class_loss_graph(rpn_match, rpn_class_logits):
     return loss
 
 
-def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
+def rpn_bbox_loss_graph(config, target_deltas, rpn_match, rpn_bbox):
     """Return the RPN bounding box loss graph.
 
     config: the model config object.
-    target_bbox: [batch, max positive anchors, (dy, dx, log(dh), log(dw))].
+    target_deltas: [batch, max positive anchors, (dy, dx, log(dh), log(dw))].
         Uses 0 padding to fill in unsed bbox deltas.
     rpn_match: [batch, anchors, 1]. Anchor match type. 1=positive,
                -1=negative, 0=neutral anchor.
@@ -851,13 +831,13 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 
     # Trim target bounding box deltas to the same length as rpn_bbox.
     batch_counts = K.sum(K.cast(K.equal(rpn_match, 1), tf.int32), axis=1)
-    target_bbox = batch_pack_graph(target_bbox, batch_counts,
+    target_deltas = batch_pack_graph(target_deltas, batch_counts,
                                    config.IMAGES_PER_GPU)
 
     # TODO: use smooth_l1_loss() rather than reimplementing here
     #       to reduce code duplication
-    # loss = smooth_l1_loss(target_bbox - rpn_bbox)
-    diff = K.abs(target_bbox - rpn_bbox)
+    # loss = smooth_l1_loss(target_deltas - rpn_bbox)
+    diff = K.abs(target_deltas - rpn_bbox)
     less_than_one = K.cast(K.less(diff, 1.0), "float32")
     loss = (less_than_one * 0.5 * diff**2) + (1 - less_than_one) * (diff - 0.5)
 
@@ -868,15 +848,16 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 def imgcap_caption_loss_graph(target_captions, generated_captions):
     """ Returns caption word one-hot vector loss
     """
-    vocabulary_size = generated_captions.shape[-1]
-    target_captions = tf.reshape(target_captions, [-1, vocabulary_size])
-    generated_captions = tf.reshape(generated_captions, [-1, vocabulary_size])
-    # loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
+    # vocabulary_size = generated_captions.shape[-1]
+    # target_captions = tf.reshape(target_captions, [-1, vocabulary_size])
+    # generated_captions = tf.reshape(generated_captions, [-1, vocabulary_size])
+    loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
     # loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)
     # loss = keras.losses.hinge(target_captions, generated_captions)
     # loss = keras.losses.categorical_hinge(target_captions, generated_captions)
     # loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_captions, logits=generated_captions)
-    loss = keras.losses.mean_squared_logarithmic_error(target_captions, generated_captions)
+    # loss = keras.losses.mean_squared_logarithmic_error(target_captions, generated_captions)
+    loss = tf.reduce_sum(loss)
     return loss
 
 
@@ -965,8 +946,7 @@ def build_text_generation_targets(rpn_rois, gt_captions, gt_boxes, config):
     rpn_roi_iou_argmax = np.argmax(overlaps, axis=1)
     rpn_roi_iou_max = overlaps[np.arange(
         overlaps.shape[0]), rpn_roi_iou_argmax]
-    # GT box assigned to each ROI
-    rpn_roi_gt_boxes = gt_boxes[rpn_roi_iou_argmax]
+    # GT captions assigned to each ROI
     rpn_roi_gt_captions = gt_captions[rpn_roi_iou_argmax]
 
     # Positive ROIs are those with >= 0.5 IoU with a GT box.
@@ -974,7 +954,7 @@ def build_text_generation_targets(rpn_rois, gt_captions, gt_boxes, config):
 
     # Negative ROIs are those with max IoU 0.1-0.5 (hard example mining)
     # TODO: To hard example mine or not to hard example mine, that's the question
-#     bg_ids = np.where((rpn_roi_iou_max >= 0.1) & (rpn_roi_iou_max < 0.5))[0]
+    # bg_ids = np.where((rpn_roi_iou_max >= 0.1) & (rpn_roi_iou_max < 0.5))[0]
     bg_ids = np.where(rpn_roi_iou_max < 0.5)[0]
 
     # Subsample ROIs. Aim for 33% foreground.
@@ -1016,13 +996,11 @@ def build_text_generation_targets(rpn_rois, gt_captions, gt_boxes, config):
         "keep doesn't match ROI batch size {}, {}".format(
             keep.shape[0], config.TRAIN_ROIS_PER_IMAGE)
 
-    # Reset the gt boxes assigned to BG ROIs.
-    rpn_roi_gt_boxes[keep_bg_ids, :] = 0
+    # Reset the gt captions assigned to BG ROIs.
     rpn_roi_gt_captions[keep_bg_ids] = 0
 
     # For each kept ROI, assign a caption, and for FG ROIs also add bbox refinement.
     rois = rpn_rois[keep]
-    roi_gt_boxes = rpn_roi_gt_boxes[keep]
     roi_gt_captions = rpn_roi_gt_captions[keep]
     roi_gt_assignment = rpn_roi_iou_argmax[keep]
 
@@ -1065,8 +1043,7 @@ def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
     anchor_iou_max = overlaps[np.arange(overlaps.shape[0]), anchor_iou_argmax]
     rpn_match[(anchor_iou_max < 0.3)] = -1
     # 2. Set an anchor for each GT box (regardless of IoU value).
-    # TODO: If multiple anchors have the same IoU match all of them
-    gt_iou_argmax = np.argmax(overlaps, axis=0)
+    gt_iou_argmax = np.argwhere(overlaps == np.amax(overlaps, axis=0))
     rpn_match[gt_iou_argmax] = 1
     # 3. Set anchors with high overlap as positive.
     rpn_match[anchor_iou_max >= 0.7] = 1
@@ -1486,7 +1463,7 @@ class DenseImageCapRCNN:
             # Subsamples proposals and generates target outputs for training
             # Note that proposal captions, and gt_boxes, are zero padded.
             # Equally, returned rois and targets are zero padded.
-            rois, target_captions, target_bbox =\
+            rois, target_captions, target_deltas =\
                 DetectionTargetLayer(config, name="proposal_targets")([
                     target_rois, input_gt_captions, gt_boxes])
 
@@ -1533,13 +1510,6 @@ class DenseImageCapRCNN:
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
             generations = GenerationMatchLayer(config, name="mrcnn_detection")(
                 [rpn_rois, img_cap_captions, input_image_meta])
-
-            # Convert boxes to normalized coordinates
-            # TODO: let DetectionLayer return normalized coordinates to avoid
-            #       unnecessary conversions
-            h, w = config.IMAGE_SHAPE[:2]
-            generation_boxes = KL.Lambda(
-                lambda x: x[..., :4] / np.array([h, w, h, w]))(generations)
 
             model = KM.Model([input_image, input_image_meta],
                              [generations, img_cap_captions,
