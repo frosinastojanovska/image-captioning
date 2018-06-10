@@ -854,13 +854,13 @@ def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
 def imgcap_caption_loss_graph(target_captions, generated_captions):
     """ Returns caption word embeddings loss
     """
-    # embedding_size = generated_captions.shape[-1]
-    # target_captions = tf.reshape(target_captions, [-1, embedding_size])
-    # generated_captions = tf.reshape(generated_captions, [-1, embedding_size])
+    embedding_size = generated_captions.shape[-1]
+    target_captions = tf.reshape(target_captions, [-1, embedding_size])
+    generated_captions = tf.reshape(generated_captions, [-1, embedding_size])
     # loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
-    target_captions = tf.nn.l2_normalize(target_captions, 3)
-    generated_captions = tf.nn.l2_normalize(generated_captions, 3)
-    loss = tf.losses.cosine_distance(target_captions, generated_captions, 1, reduction=tf.losses.Reduction.SUM)
+    target_captions = tf.nn.l2_normalize(target_captions, 0)
+    generated_captions = tf.nn.l2_normalize(generated_captions, 0)
+    loss = tf.losses.cosine_distance(target_captions, generated_captions, 1, reduction=tf.losses.Reduction.SUM_BY_NONZERO_WEIGHTS)
     # loss = keras.losses.cosine_proximity(target_captions, generated_captions)
     # loss = keras.losses.logcosh(target_captions, generated_captions)
     # loss = K.sqrt(K.sum(K.square(target_captions - generated_captions), axis=-1, keepdims=True))
