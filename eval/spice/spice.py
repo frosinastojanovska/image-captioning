@@ -1,4 +1,3 @@
-from __future__ import division
 import os
 import subprocess
 import json
@@ -84,7 +83,7 @@ class Spice:
         for image_id in img_ids:
             # Convert none to NaN before saving scores over subcategories
             score_set = {}
-            for category, score_tuple in img_id_to_scores[image_id].iteritems():
+            for category, score_tuple in img_id_to_scores[image_id].items():
                 score_set[category] = {k: self.float_convert(v) for k, v in score_tuple.items()}
             scores.append(score_set)
 
