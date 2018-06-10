@@ -10,8 +10,6 @@ import utils
 from config import Config
 import dense_model as modellib
 from preprocess import encode_caption, load_corpus, tokenize_corpus
-from gensim.models import KeyedVectors
-from nltk.tokenize import word_tokenize
 import _pickle
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -89,15 +87,13 @@ class VisualGenomeDataset(utils.Dataset):
         return image
 
     def load_captions_and_rois(self, image_id):
-        """Generate instance masks for shapes of the given image ID.
+        """Generate instance captions of the given image ID.
         """
         image_info = self.image_info[image_id]
-        # rois = np.array(image_info['rois'])
-        # captions = image_info['captions']
         rois = []
         caps = []
         for roi, caption in zip(image_info['rois'], image_info['captions']):
-            cap = self.encode_region_caption(caption[0], self.word_to_id)
+            cap = self.encode_region_caption(caption[0])
             if cap.size != 0:
                 rois.append(roi)
                 caps.append(cap)
@@ -105,9 +101,15 @@ class VisualGenomeDataset(utils.Dataset):
         rois = np.array(rois)
         return rois, captions
 
-    def encode_region_caption(self, caption, word_to_id):
+    def load_original_captions_and_rois(self, image_id):
+        image_info = self.image_info[image_id]
+        rois = np.array(image_info['rois'])
+        captions = image_info['captions']
+        return rois, captions
+
+    def encode_region_caption(self, caption):
         """ Convert caption to word embedding vector """
-        return encode_caption(caption, word_to_id)
+        return encode_caption(caption, self.word_to_id)
 
 
 if __name__ == '__main__':

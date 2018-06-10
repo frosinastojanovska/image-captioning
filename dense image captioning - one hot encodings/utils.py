@@ -255,6 +255,20 @@ class Dataset(object):
         return image
 
     def load_captions_and_rois(self, image_id):
+        """Load encoded region captions for the given image.
+
+        Returns:
+            bboxes: A bool array of shape [height, width, instance count] with
+                a binary mask per instance.
+            captions: a 1D array of encoded captions for the rois.
+        """
+        # Override this function to load encoded roi captions from your dataset.
+        # Otherwise, it returns an empty caption.
+        bboxes = np.empty([0, 0, 0, 0])
+        captions = np.empty([0], np.float32)
+        return bboxes, captions
+
+    def load_original_captions_and_rois(self, image_id):
         """Load region captions for the given image.
 
         Override this

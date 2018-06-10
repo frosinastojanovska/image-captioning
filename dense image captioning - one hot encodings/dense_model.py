@@ -1008,7 +1008,6 @@ def build_text_generation_targets(rpn_rois, gt_captions, gt_boxes, config):
 
 
 def build_rpn_targets(image_shape, anchors, gt_captions, gt_boxes, config):
-    # TODO: check if there is need to change this to work with captions dataset
     """Given the anchors and GT boxes, compute overlaps and identify positive
     anchors and deltas to refine them to match their corresponding GT boxes.
 
@@ -1591,7 +1590,7 @@ class DenseImageCapRCNN:
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        optimizer = keras.optimizers.Adadelta(lr=learning_rate)  # Adam(lr=learning_rate, clipnorm=0.5, amsgrad=True)
+        optimizer = keras.optimizers.Adam(lr=learning_rate, clipnorm=0.5, amsgrad=True)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
@@ -1605,9 +1604,15 @@ class DenseImageCapRCNN:
             self.keras_model.add_loss(
                 tf.reduce_mean(layer.output, keep_dims=True))
 
+        # Add L2 Regularization
+        # Skip gamma and beta weights of batch normalization layers.
+        reg_losses = [keras.regularizers.l2(self.config.WEIGHT_DECAY)(w) / tf.cast(tf.size(w), tf.float32)
+                      for w in self.keras_model.trainable_weights
+                      if 'gamma' not in w.name and 'beta' not in w.name]
+        self.keras_model.add_loss(tf.add_n(reg_losses))
+
         # Compile
-        self.keras_model.compile(optimizer=optimizer, loss=[
-                                 None] * len(self.keras_model.outputs))
+        self.keras_model.compile(optimizer=optimizer, loss=[None] * len(self.keras_model.outputs))
 
         # Add metrics for losses
         for name in loss_names:
@@ -1787,7 +1792,6 @@ class DenseImageCapRCNN:
         windows = []
         for image in images:
             # Resize image to fit the model expected size
-            # TODO: move resizing to mold_image()
             molded_image, window, scale, padding = utils.resize_image(
                 image,
                 min_dim=self.config.IMAGE_MIN_DIM,
