@@ -10,7 +10,6 @@ import utils
 from config import Config
 import dense_model as modellib
 from preprocess import encode_caption, load_embeddings, load_embeddings_model
-from gensim.models import KeyedVectors
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
@@ -38,36 +37,52 @@ class DenseCapConfig(Config):
     PADDING_SIZE = 15
 
 
-class VisualGenomeDataset(utils.Dataset):
+class MSCocoDataset(utils.Dataset):
     def __init__(self, embeddings, padding_size):
         super().__init__()
         self.word_embeddings = embeddings
         self.padding_size = padding_size
 
-    def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
+    def load_ms_coco(self, data_dir, image_ids, image_meta_file, data_file, train_data_file, validation_data_file):
+        with open(image_meta_file, 'r', encoding='utf-8') as doc:
+            img_meta = json.loads(doc.read())
+        image_meta = dict()
+        vg_ids = dict()
+        for x in img_meta:
+            if x['coco_id'] in image_ids:
+                image_meta[x['coco_id']] = x
+                vg_ids[x['image_id']] = x['coco_id']
+
         with open(data_file, 'r', encoding='utf-8') as doc:
             img_data = json.loads(doc.read())
         data = dict()
         for x in img_data:
-            data[x['id']] = x['regions']
-
-        with open(image_meta_file, 'r', encoding='utf-8') as doc:
-            img_meta = json.loads(doc.read())
-        image_meta = dict()
-        for x in img_meta:
-            image_meta[x['image_id']] = x
+            if x['id'] in list(vg_ids.keys()):
+                data[vg_ids[x['id']]] = x['regions']
 
         # Add images
-        for i in image_ids:
-            captions = [[d['phrase']] for d in data[i]]
-            self.add_image(
-                "VisualGenome", image_id=i,
-                path=os.path.join(data_dir, '{}.jpg'.format(i)),
-                width=image_meta[i]['width'],
-                height=image_meta[i]['height'],
-                rois=[[d['y'], d['x'], d['y'] + d['height'], d['x'] + d['width']] for d in data[i]],
-                captions=captions
-            )
+        with open(train_data_file, 'r', encoding='utf-8') as file:
+            image_data = json.loads(file.read())
+        image_annotations = image_data['annotations']
+        names = dict()
+        for d in image_data['images']:
+            names[d['id']] = d['file_name']
+        with open(validation_data_file_path, 'r', encoding='utf-8') as file:
+            image_data = json.loads(file.read())
+        image_annotations += image_data['annotations']
+        for d in image_data['images']:
+            names[d['id']] = d['file_name']
+
+        for i in image_annotations:
+            if i['image_id'] in image_ids:
+                self.add_image(
+                    "MSCOCO", image_id=i['id'],
+                    path=os.path.join(data_dir, '{}'.format(names[i['image_id']])),
+                    width=image_meta[i['image_id']]['width'],
+                    height=image_meta[i['image_id']]['height'],
+                    rois=[[d['y'], d['x'], d['y'] + d['height'], d['x'] + d['width']] for d in data[i['image_id']]],
+                    caption=i['caption']
+                )
 
     def image_reference(self, image_id):
         """Return a link to the image in the Stanford Website."""
@@ -102,16 +117,6 @@ class VisualGenomeDataset(utils.Dataset):
 
 
 if __name__ == '__main__':
-    '''
-    import keras.backend as K
-    K.clear_session()
-    import tensorflow as tf
-    config = tf.ConfigProto()
-    config.gpu_options.per_process_gpu_memory_fraction = 0.5  # maximun alloc gpu50% of MEM
-    config.gpu_options.allow_growth = True  # allocate dynamically
-    sess = tf.Session(config=config)
-    '''
-
     # Root directory of the project
     ROOT_DIR = os.getcwd()
 
@@ -123,43 +128,53 @@ if __name__ == '__main__':
     config = DenseCapConfig()
     config.display()
 
-    data_directory = '../dataset/visual genome/'
-    image_meta_file_path = '../dataset/image_data.json'
-    data_file_path = '../dataset/region_descriptions.json'
+    data_directory = '../dataset/mscoco/'
+    vg_image_meta_file_path = '../dataset/image_data.json'
+    vg_data_file_path = '../dataset/region_descriptions.json'
+    validation_data_file_path = '../dataset/captions_val2014.json'
+    train_data_file_path = '../dataset/captions_train2014.json'
     glove_file = '../dataset/glove.6B.100d.txt'
     word2vec_file = '../dataset/glove.6B.100d.txt.word2vec'
 
-    with open(image_meta_file_path, 'r', encoding='utf-8') as file:
+    with open(vg_image_meta_file_path, 'r', encoding='utf-8') as file:
         image_meta_data = json.loads(file.read())
-    image_ids_list = [meta['image_id'] for meta in image_meta_data]
+    vg_image_ids_list = [meta['coco_id'] for meta in image_meta_data if meta['coco_id'] is not None]
+
+    with open(train_data_file_path, 'r', encoding='utf-8') as file:
+        image_data = json.loads(file.read())
+    image_ids_list = [data['id'] for data in image_data['images']]
+    with open(validation_data_file_path, 'r', encoding='utf-8') as file:
+        image_data = json.loads(file.read())
+    image_ids_list += [data['id'] for data in image_data['images']]
 
     # image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
 
-    train_image_ids = image_ids_list[:90000]
-    val_image_ids = image_ids_list[90000:100000]
-    test_image_ids = image_ids_list[100000:]
+    image_ids = [i for i in vg_image_ids_list if i in image_ids_list]
+    train_image_ids = image_ids[:int(0.8 * len(image_ids))]
+    val_image_ids = image_ids[int(0.8 * len(image_ids)):int(len(image_ids))]
+    test_image_ids = [i for i in image_ids_list if i not in image_ids]
 
     # load word embeddings
     # word_embeddings = load_embeddings(glove_file)
     word_embeddings = load_embeddings_model(glove_file, word2vec_file)
 
-    # Training dataset
-    dataset_train = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE)
-    dataset_train.load_visual_genome(data_directory, train_image_ids,
-                                     image_meta_file_path, data_file_path)
-    dataset_train.prepare()
-
     # Validation dataset
-    dataset_val = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE)
-    dataset_val.load_visual_genome(data_directory, val_image_ids,
-                                   image_meta_file_path, data_file_path)
+    dataset_val = MSCocoDataset(word_embeddings, config.PADDING_SIZE)
+    dataset_val.load_ms_coco(data_directory, val_image_ids, vg_image_meta_file_path, vg_data_file_path,
+                             train_data_file_path, validation_data_file_path)
     dataset_val.prepare()
+
+    # Training dataset
+    dataset_train = MSCocoDataset(word_embeddings, config.PADDING_SIZE)
+    dataset_train.load_ms_coco(data_directory, train_image_ids, vg_image_meta_file_path, vg_data_file_path,
+                               train_data_file_path, validation_data_file_path)
+    dataset_train.prepare()
 
     init_with = 'coco'
 
     # Create model in training mode
-    model = modellib.DenseImageCapRCNN(mode="training", config=config,
-                                       model_dir=MODEL_DIR)
+    model = modellib.ImageCapRCNN(mode="training", config=config,
+                                  model_dir=MODEL_DIR)
 
     if init_with == "last":
         # Load the last model you trained and continue training
@@ -177,7 +192,7 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE / 10,
-                epochs=200,
+                epochs=250,
                 layers="lstm_only")
 
     end_time = time.time()

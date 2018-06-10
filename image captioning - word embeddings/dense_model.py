@@ -753,20 +753,16 @@ def lstm_generator_graph(rois, feature_maps,
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
     x = PyramidROIAlign([pool_size, pool_size], image_shape,
                         name="roi_align_generator")([rois] + feature_maps)
-    td = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
+    td = KL.Flatten(name='imgcap_lstm_f1')(x)
 
-    td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
-    rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm1'),
-                             name='imgcap_lstm_td3')(td_r)
+    td_r = KL.RepeatVector(padding_size, name='imgcap_lstm_rv1')(td)
+    rnn = KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm1')(td_r)
     if stacked:
-        rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm2'),
-                                 name='imgcap_lstm_td6')(rnn)
+        rnn = KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm2')(rnn)
 
     captions = KL.TimeDistributed(
-        KL.TimeDistributed(
-            KL.Dense(embedding_size, activation='linear', name='imgcap_lstm_d1'),
-        name='imgcap_lstm_td4'),
-    name='imgcap_lstm_td5')(rnn)
+        KL.Dense(embedding_size, activation='linear', name='imgcap_lstm_d1'),
+        name='imgcap_lstm_td4')(rnn)
 
     normalized_captions = KL.BatchNormalization(name='imgcap_lstm_batch_norm')(captions)
 
@@ -1329,10 +1325,10 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
 
 
 ############################################################
-#  DenseImageCapRCNN Class
+#  ImageCapRCNN Class
 ############################################################
 
-class DenseImageCapRCNN:
+class ImageCapRCNN:
     """Encapsulates the Dense Image Captioning model functionality.
 
     The actual Keras model is in the keras_model property.
