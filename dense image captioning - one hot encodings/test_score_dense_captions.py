@@ -5,9 +5,11 @@ import numpy as np
 
 import utils
 import dense_model as modellib
+from eval.spice.spice import Spice
 from preprocess import decode_caption
 from eval.meteor.meteor import Meteor
 from train_dense_captions import DenseCapConfig
+from eval.tokenizer.ptbtokenizer import PTBTokenizer
 from train_dense_captions import VisualGenomeDataset
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '1'
@@ -18,16 +20,29 @@ class InferenceConfig(DenseCapConfig):
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
+    DETECTION_NMS_THRESHOLD = 0.7
 
     def __init__(self, vocab_size):
         super().__init__(vocab_size)
 
 
 class DenseCaptioningEvaluator:
-    def __init__(self, model, dataset, id_to_word):
+    def __init__(self, model, text_metrics, dataset, id_to_word):
+        """
+        :param model: Dense Captioning keras model in inference mode
+        :type model: keras model object
+        :param text_metrics: language metrics, one of {'SPICE', 'METEOR'}
+        :type text_metrics: str
+        :param dataset: the test dataset
+        :type dataset: VisualGenomeDataset object
+        :param id_to_word: mapping from id to words from the vocabulary
+        :type id_to_word: dict
+        """
+        assert (text_metrics in {'SPICE', 'METEOR'})
         self.min_overlaps = [0.3, 0.4, 0.5, 0.6, 0.7]
         self.min_scores = [-1, 0, 0.05, 0.1, 0.15, 0.2, 0.25]
         self.model = model
+        self.method = text_metrics
         self.dataset = dataset
         self.id_to_word = id_to_word
         self.predictions = None
@@ -41,13 +56,13 @@ class DenseCaptioningEvaluator:
         each other.
 
         :param boxes: boxes representing the ROIs
-        :type boxes: np.array
+        :type boxes: numpy.array
         :param captions: captions for each box
         :type captions: list(list(str))
         :param thresh: IoU threshold for overlapping boxes
         :type thresh: float
         :return: merged boxes, merged captions
-        :rtype: (np.array, list(list(str)))
+        :rtype: (numpy.array, list(list(str)))
         """
         assert (thresh > 0)
         pairwise_iou = utils.compute_overlaps(boxes, boxes)
@@ -86,7 +101,7 @@ class DenseCaptioningEvaluator:
         :param image_ids: ids to the images from the dataset
         :type image_ids: list(int)
         :return: images, ground truth boxes, ground truth captions
-        :rtype: list(np.array), list(np.array), list(list(str))
+        :rtype: list(numpy.array), list(numpy.array), list(list(str))
         """
         images = []
         gt_boxes = []
@@ -113,9 +128,9 @@ class DenseCaptioningEvaluator:
         :param num_images: number of images
         :type num_images: int
         :param images: the images
-        :type images: list(np.array)
+        :type images: list(numpy.array)
         :return: detected boxes, generated captions, log probabilities for each captions (box)
-        :rtype: (list(np.array), list(list(str)), list(np.array))
+        :rtype: (list(numpy.array), list(list(str)), list(numpy.array))
         """
         boxes = []
         captions = []
@@ -136,15 +151,26 @@ class DenseCaptioningEvaluator:
 
     @staticmethod
     def assign_detections_to_ground_truth(num_images, gt_boxes, gt_captions, boxes, captions, log_probs):
-        """
+        """ Assign detected boxes to ground truth boxes. The detected boxes are assigned to one of
+        the ground truth boxes according to the maximum IoU overlapping score, and if two detected
+        boxes have the same score, then the detected box with greater generation probability is
+        assigned to the corresponding ground truth box.
 
-        :param num_images:
-        :param gt_boxes:
-        :param gt_captions:
-        :param boxes:
-        :param captions:
-        :param log_probs:
-        :return:
+        :param num_images: number of images
+        :type num_images: int
+        :param gt_boxes: ground truth boxes
+        :type gt_boxes: list(numpy.array)
+        :param gt_captions: ground truth captions
+        :type gt_captions: list(list(str))
+        :param boxes: detected boxes
+        :type boxes: list(numpy.array)
+        :param captions: generated captions for each box
+        :type captions: list(list(str))
+        :param log_probs: log probabilities for each captions (box)
+        :type log_probs: list(numpy.array)
+        :return: {'ok': ok for the ground truth, 'ov': overlap score,
+                  'candidate': generated caption, 'references': reference captions}
+        :rtype: dict
         """
         results = []
         for i in range(num_images):
@@ -174,9 +200,19 @@ class DenseCaptioningEvaluator:
 
         return results
 
-    @staticmethod
-    def score_captions(records):
-        m = Meteor()
+    def score_captions(self, records):
+        """ Scores generated captions using the SPICE metrics
+
+        :param records: records for aligned detections and generations with ground truths
+        :type records: list(dict)
+        :return: score for each caption (caption for each box)
+        """
+        assert (self.method in {'SPICE', 'METEOR'})
+        if self.method == 'SPICE':
+            scorer = Spice()
+        else:
+            scorer = Meteor()
+        tokenizer = PTBTokenizer()
         scores = []
         for r in records:
             gens = {}
@@ -184,12 +220,13 @@ class DenseCaptioningEvaluator:
             for rec, i in zip(r, range(len(r))):
                 gens[str(i)] = [rec['candidate']]
                 refs[str(i)] = [sent[0] for sent in rec['references']]
-                # score = m.compute_score(rec['candidate'], [sent[0] for sent in rec['references']])
-            print('entering Meteor')
-            score, scoress = m.compute_score(refs, gens)
-            print(score)
-            # print(scoress)
-            scores.append(score)
+            gens = tokenizer.tokenize(gens)
+            refs = tokenizer.tokenize(refs)
+            refs.update({key: [] for key in gens if key not in refs})
+            avg_score, all_scores = scorer.compute_score(refs, gens)
+            if self.method == 'SPICE':
+                all_scores = [s['All']['f'] for s in all_scores]
+            scores.append(all_scores)
 
         return scores
 
@@ -208,9 +245,8 @@ class DenseCaptioningEvaluator:
 
         records = self.assign_detections_to_ground_truth(num_images, gt_boxes, gt_captions,
                                                          boxes, captions, log_probs)
-        # METEOR
+        # text scores
         scores = self.score_captions(records)
-        print(scores)
 
         # flatten everything
         records = [item for sublist in records for item in sublist]
@@ -247,9 +283,12 @@ class DenseCaptioningEvaluator:
                 ap = 0
                 apn = 0
                 for t in [n / 100 for n in range(0, 101)]:
-                    mask = rec > t
+                    mask = rec >= t
                     prec_masked = prec[mask]
-                    p = np.amax(prec_masked)
+                    if prec_masked.shape[0] > 0:
+                        p = np.amax(prec_masked)
+                    else:
+                        p = 0
                     ap = ap + p
                     apn = apn + 1
 
@@ -261,8 +300,8 @@ class DenseCaptioningEvaluator:
                 else:
                     ap_results['ov{}_score{}'.format(min_overlap, min_score)] = ap
 
-        map_value = np.mean(ap_results.values())
-        det_map = np.mean(det_results.values())
+        map_value = np.mean(list(ap_results.values()))
+        det_map = np.mean(list(det_results.values()))
         return {'map': map_value, 'ap_breakdown': ap_results, 'detmap': det_map, 'det_breakdown': det_results}
 
 
@@ -309,11 +348,11 @@ def evaluate_test_captions(results_file_path):
     #  Create model object in inference mode.
     model = modellib.DenseImageCapRCNN(mode="inference", model_dir=model_path, config=config)
 
-    evaluator = DenseCaptioningEvaluator(model, dataset_test, id_to_word)
+    evaluator = DenseCaptioningEvaluator(model, 'SPICE', dataset_test, id_to_word)
     results = evaluator.evaluate()
-    with open(results_file_path, 'wb') as fp:
-        pickle.dump(results, fp, protocol=pickle.HIGHEST_PROTOCOL)
+    with open(results_file_path, 'w') as file_path:
+        json.dump(results, file_path)
 
 
 if __name__ == '__main__':
-    evaluate_test_captions('results_test.p')
+    evaluate_test_captions('results_test.json')

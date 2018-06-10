@@ -31,7 +31,6 @@ class Meteor:
         img_ids = gts.keys()
         scores = []
 
-        print('start meteor')
         eval_line = 'EVAL'
         self.lock.acquire()
         for i in img_ids:
@@ -39,7 +38,6 @@ class Meteor:
             stat = self._stat(res[i][0], gts[i])
             eval_line += ' ||| {}'.format(stat)
 
-        print('start eval meteor')
         self.meteor_p.stdin.write('{}\n'.format(eval_line).encode())
         for i in range(0, len(img_ids)):
             scores.append(float(self.meteor_p.stdout.readline().strip()))

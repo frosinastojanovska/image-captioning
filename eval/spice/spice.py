@@ -23,9 +23,9 @@ class Spice:
             return np.nan
 
     def compute_score(self, gts, res):
-        assert(sorted(gts.keys()) == sorted(res.keys()))
+        assert (sorted(gts.keys()) == sorted(res.keys()))
         img_ids = sorted(gts.keys())
-        
+
         # Prepare temp input file for the SPICE scorer
         input_data = []
         for img_id in img_ids:
@@ -33,27 +33,27 @@ class Spice:
             ref = gts[img_id]
 
             # Sanity check.
-            assert(type(hypo) is list)
-            assert(len(hypo) == 1)
-            assert(type(ref) is list)
-            assert(len(ref) >= 1)
+            assert (type(hypo) is list)
+            assert (len(hypo) == 1)
+            assert (type(ref) is list)
+            assert (len(ref) >= 0)
 
             input_data.append({
-              "image_id": img_id,
-              "test": hypo[0],
-              "refs": ref
+                "image_id": img_id,
+                "test": hypo[0],
+                "refs": ref
             })
 
         cwd = os.path.dirname(os.path.abspath(__file__))
         temp_dir = os.path.join(cwd, TEMP_DIR)
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
-        in_file = tempfile.NamedTemporaryFile(delete=False, dir=temp_dir)
+        in_file = tempfile.NamedTemporaryFile(mode='w', delete=False, dir=temp_dir, prefix='in_', encoding='utf-8')
         json.dump(input_data, in_file, indent=2)
         in_file.close()
 
         # Start job
-        out_file = tempfile.NamedTemporaryFile(delete=False, dir=temp_dir)
+        out_file = tempfile.NamedTemporaryFile(mode='w', delete=False, dir=temp_dir, prefix='out_', encoding='utf-8')
         out_file.close()
         cache_dir = os.path.join(cwd, CACHE_DIR)
         if not os.path.exists(cache_dir):
