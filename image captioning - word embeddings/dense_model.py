@@ -585,7 +585,7 @@ class DetectionTargetLayer(KE.Layer):
     def compute_output_shape(self, input_shape):
         return [
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # rois
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.PADDING_SIZE, self.config.EMBEDDING_SIZE),  # captions
+            (None, self.config.PADDING_SIZE, self.config.EMBEDDING_SIZE),  # captions
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4)  # deltas
         ]
 
@@ -764,13 +764,13 @@ def lstm_generator_graph(rois, feature_maps,
         KL.Dense(embedding_size, activation='linear', name='imgcap_lstm_d1'),
         name='imgcap_lstm_td4')(rnn)
 
-    normalized_captions = KL.BatchNormalization(name='imgcap_lstm_batch_norm')(captions)
+    # normalized_captions = KL.BatchNormalization(name='imgcap_lstm_batch_norm')(captions)
 
     # captions = np.array([[['']]] * rois.shape[0])
     # captions = tf.convert_to_tensor(captions, dtype=captions.dtype)
     # s = K.int_shape(captions)
     # captions = KL.TimeDistributed(KL.Lambda(lambda y: y, output_shape=s), dtype=captions.dtype)(captions)
-    return normalized_captions
+    return captions  # normalized_captions
 
 
 ############################################################
@@ -1235,6 +1235,8 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
             image_id = image_ids[image_index]
             image, image_meta, gt_captions, gt_boxes = \
                 load_image_gt(dataset, config, image_id, augment=augment)
+            print('gt captions shape', gt_captions.shape)
+            print('gt boxes shape', gt_boxes.shape)
 
             # RPN Targets
             rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors,
@@ -1259,10 +1261,11 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 batch_images = np.zeros(
                     (batch_size,) + image.shape, dtype=np.float32)
                 batch_gt_captions = np.zeros(
-                    (batch_size, config.MAX_GT_INSTANCES, config.PADDING_SIZE, config.EMBEDDING_SIZE),
-                    dtype=gt_captions.dtype)
+                    (batch_size, 1, config.PADDING_SIZE, config.EMBEDDING_SIZE), dtype=gt_captions.dtype)
+                print('batch gt captions shape', batch_gt_captions.shape)
                 batch_gt_boxes = np.zeros(
                     (batch_size, config.MAX_GT_INSTANCES, 4), dtype=gt_boxes.dtype)
+                print('batch gt boxes shape', batch_gt_boxes.shape)
                 if random_rois:
                     batch_rpn_rois = np.zeros(
                         (batch_size, rpn_rois.shape[0], 4), dtype=rpn_rois.dtype)

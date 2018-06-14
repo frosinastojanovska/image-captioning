@@ -20,12 +20,12 @@ class DenseCapConfig(Config):
     to the toy shapes dataset.
     """
     # Give the configuration a recognizable name
-    NAME = "dense image captioning"
+    NAME = "image captioning"
 
     # Train on 1 GPU and 8 images per GPU. We can put multiple images on each
     # GPU because the images are small. Batch size is 8 (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 3
+    IMAGES_PER_GPU = 1
 
     STEPS_PER_EPOCH = 500
     VALIDATION_STEPS = 50
@@ -34,7 +34,7 @@ class DenseCapConfig(Config):
     EMBEDDING_SIZE = 100
 
     # Padding size
-    PADDING_SIZE = 15
+    PADDING_SIZE = 10
 
 
 class MSCocoDataset(utils.Dataset):
@@ -104,11 +104,16 @@ class MSCocoDataset(utils.Dataset):
         """
         image_info = self.image_info[image_id]
         rois = np.array(image_info['rois'])
-        captions = image_info['captions']
-        caps = []
-        for caption in captions:
-            caps.append(self.encode_region_caption(caption[0], self.word_embeddings))
-        captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
+        caption = image_info['caption']
+        # caps = []
+        # for caption in captions:
+        #    caps.append(self.encode_region_caption(caption[0], self.word_embeddings))
+        print(caption)
+        cap = self.encode_region_caption(caption, self.word_embeddings)
+        cap = np.reshape(cap, (1,) + cap.shape)
+        print('captions shape before', cap.shape)
+        captions = pad_sequences(cap, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
+        print('captions shape after', captions.shape)
         return rois, captions
 
     def encode_region_caption(self, caption, embeddings):
@@ -150,8 +155,8 @@ if __name__ == '__main__':
     # image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
 
     image_ids = [i for i in vg_image_ids_list if i in image_ids_list]
-    train_image_ids = image_ids[:int(0.8 * len(image_ids))]
-    val_image_ids = image_ids[int(0.8 * len(image_ids)):int(len(image_ids))]
+    train_image_ids = image_ids[:5] # image_ids[:int(0.8 * len(image_ids))]
+    val_image_ids = image_ids[5:6] # image_ids[int(0.8 * len(image_ids)):int(len(image_ids))]
     test_image_ids = [i for i in image_ids_list if i not in image_ids]
 
     # load word embeddings
