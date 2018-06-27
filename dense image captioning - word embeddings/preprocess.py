@@ -1,7 +1,5 @@
 from nltk.tokenize import word_tokenize
-from textblob import Word
 import numpy as np
-from scipy.spatial import distance
 import os
 from gensim.models import KeyedVectors
 import json

@@ -6,20 +6,18 @@ Code taken from https://github.com/matterport/Mask_RCNN and modified by Frosina 
 """
 
 import os
-import random
-import datetime
 import re
-import logging
-from collections import OrderedDict
-import numpy as np
-import scipy.misc
-import tensorflow as tf
 import keras
+import random
+import logging
+import datetime
+import numpy as np
+import tensorflow as tf
 import keras.backend as K
 import keras.layers as KL
 import keras.engine as KE
 import keras.models as KM
-import math
+from collections import OrderedDict
 
 import utils
 
@@ -524,7 +522,7 @@ def detection_targets_graph(proposals, gt_captions, gt_boxes, config):
     P = tf.maximum(config.TRAIN_ROIS_PER_IMAGE - tf.shape(rois)[0], 0)
     rois = tf.pad(rois, [(0, P), (0, 0)])
     roi_gt_boxes = tf.pad(roi_gt_boxes, [(0, N + P), (0, 0)])
-    roi_gt_captions = tf.pad(roi_gt_captions, [(0, N + P), (0, 0), (0, 0)])
+    roi_gt_captions = tf.pad(roi_gt_captions, [(0, N + P), (0, 0)])
     deltas = tf.pad(deltas, [(0, N + P), (0, 0)])
 
     return rois, roi_gt_captions, deltas
@@ -569,7 +567,7 @@ class DetectionTargetLayer(KE.Layer):
     def compute_output_shape(self, input_shape):
         return [
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),  # rois
-            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.PADDING_SIZE, self.config.VOCABULARY_SIZE),  # captions
+            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.PADDING_SIZE),  # captions
             (None, self.config.TRAIN_ROIS_PER_IMAGE, 4)  # deltas
         ]
 
@@ -736,40 +734,45 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 ############################################################
 #  LSTM text generator
 ############################################################
-def lstm_generator_graph(rois, feature_maps,
-                         image_shape, pool_size, vocabulary_size, padding_size, units, mode):
+def lstm_generator_graph(features, gt_captions, config, units):
     # TODO: CHANGE THIS !!!!!!!!!!!!!!!!!!!!
-    x = PyramidROIAlign([pool_size, pool_size], image_shape,
-                        name="roi_align_generator")([rois] + feature_maps)
-    td = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
+    embedd = KL.Embedding(input_dim=config.VOCABULARY_SIZE,
+                          output_dim=config.EMBEDDING_SIZE,
+                          weights=[config.EMBEDDING_WEIGHTS],
+                          trainable=False,
+                          name='imgcap_embedding_layer')(gt_captions)
 
-    td_r = KL.TimeDistributed(KL.RepeatVector(padding_size, name='imgcap_lstm_rv1'), name='imgcap_lstm_td2')(td)
-    mask = KL.TimeDistributed(KL.Masking(mask_value=0.0, name='imgcap_lstm_m1'), name='imgcap_lstm_td6')(td_r)
-    rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, name='imgcap_lstm_lstm1'),
-                             name='imgcap_lstm_td3')(mask)
+    concatenated_input = KL.Concatenate(axis=-1)([features, embedd])
 
-    captions = KL.TimeDistributed(
-        KL.TimeDistributed(
-            KL.Dense(vocabulary_size, activation='softmax', name='imgcap_lstm_d1'),
-            name='imgcap_lstm_td4'),
-        name='imgcap_lstm_td5')(rnn)
+    rnn = KL.TimeDistributed(KL.LSTM(units=units, return_sequences=True, recurrent_dropout=0.2,
+                                     name='imgcap_lstm_lstm1'), name='imgcap_lstm_td3')(concatenated_input)
 
-    '''
-    if mode == 'training':
-        captions = KL.TimeDistributed(
-            KL.TimeDistributed(
-                KL.Dense(vocabulary_size, name='imgcap_lstm_d1'),
-                name='imgcap_lstm_td4'),
-            name='imgcap_lstm_td5')(rnn)
-    else:
-        captions = KL.TimeDistributed(
-            KL.TimeDistributed(
-                KL.Dense(vocabulary_size, activation='softmax', name='imgcap_lstm_d1'),
-                name='imgcap_lstm_td4'),
-            name='imgcap_lstm_td5')(rnn)
-    '''
+    concatenated_output = KL.Concatenate(axis=-1)([features, rnn])
+
+    captions = KL.TimeDistributed(KL.Dense(1024, activation='relu', name='imgcap_lstm_d1'),
+                                  name='imgcap_lstm_td4')(concatenated_output)
+    captions = KL.TimeDistributed(KL.Dense(config.VOCABULARY_SIZE, activation='softmax', name='imgcap_lstm_d2'),
+                                  name='imgcap_lstm_td5')(captions)
 
     return captions
+
+
+def build_lstm_model(features_input, config, units):
+    """Builds a Keras model of the LSTM Caption Generation Network.
+    It wraps the lstm generator graph so it can be used multiple times with shared
+    weights.
+
+    features_input: expected shape of the features as input (without batch size)
+    config: Configuration object.
+    units: Number of units of the LSTM network.
+
+    Returns a Keras Model object. The model output, when called, is:
+    generated_words: [batch, NUMBER OF ROIS, PADDING_SIZE, VOCABULARY_SIZE] Words of captions for each ROI.
+    """
+    features = KL.Input(shape=features_input, name="input_imgcap_lstm_features")
+    gt_captions = KL.Input(shape=features_input[:-1], name="input_imgcap_lstm_gt_captions")
+    outputs = lstm_generator_graph(features, gt_captions, config, units)
+    return KM.Model([features, gt_captions], outputs, name="imgcap_lstm_model")
 
 
 ############################################################
@@ -851,13 +854,14 @@ def imgcap_caption_loss_graph(target_captions, generated_captions):
     # vocabulary_size = generated_captions.shape[-1]
     # target_captions = tf.reshape(target_captions, [-1, vocabulary_size])
     # generated_captions = tf.reshape(generated_captions, [-1, vocabulary_size])
-    loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
+    # loss = keras.losses.categorical_crossentropy(target_captions, generated_captions)
+    loss = keras.losses.sparse_categorical_crossentropy(target_captions, generated_captions)
     # loss = tf.losses.cosine_distance(target_captions, generated_captions, 1)
     # loss = keras.losses.hinge(target_captions, generated_captions)
     # loss = keras.losses.categorical_hinge(target_captions, generated_captions)
     # loss = tf.nn.softmax_cross_entropy_with_logits(labels=target_captions, logits=generated_captions)
     # loss = keras.losses.mean_squared_logarithmic_error(target_captions, generated_captions)
-    loss = tf.reduce_sum(loss)
+    loss = tf.reduce_mean(loss)
     return loss
 
 
@@ -1253,7 +1257,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 batch_images = np.zeros(
                     (batch_size,) + image.shape, dtype=np.float32)
                 batch_gt_captions = np.zeros(
-                    (batch_size, config.MAX_GT_INSTANCES, config.PADDING_SIZE, config.VOCABULARY_SIZE),
+                    (batch_size, config.MAX_GT_INSTANCES, config.PADDING_SIZE),
                     dtype=gt_captions.dtype)
                 batch_gt_boxes = np.zeros(
                     (batch_size, config.MAX_GT_INSTANCES, 4), dtype=gt_boxes.dtype)
@@ -1371,8 +1375,8 @@ class DenseImageCapRCNN:
             # Generation GT (captions, bounding boxes)
             # GT Captions
             input_gt_captions = KL.Input(
-                shape=[None, self.config.PADDING_SIZE, self.config.VOCABULARY_SIZE],
-                name="input_gt_captions", dtype=tf.float32)
+                shape=[None, self.config.PADDING_SIZE],
+                name="input_gt_captions", dtype=tf.int32)
             # 2. GT Boxes in pixels (zero padded)
             # [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in image coordinates
             input_gt_boxes = KL.Input(
@@ -1466,11 +1470,18 @@ class DenseImageCapRCNN:
                 DetectionTargetLayer(config, name="proposal_targets")([
                     target_rois, input_gt_captions, gt_boxes])
 
+            # Align the rois
+            x = PyramidROIAlign([config.POOL_SIZE, config.POOL_SIZE], config.IMAGE_SHAPE,
+                                name="roi_align_generator")([rois] + img_cap_feature_maps)
+            features = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
+            features = KL.TimeDistributed(KL.RepeatVector(config.PADDING_SIZE, name='imgcap_lstm_rv1'),
+                                          name='imgcap_lstm_td2')(features)
+
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
-            img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
-                                                    config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE, config.VOCABULARY_SIZE, config.PADDING_SIZE, 128, mode)
+            lstm_generator = build_lstm_model(features.shape.as_list()[1:], config, 512)
+            # img_cap_captions = lstm_generator_graph(features, target_captions, config, 512)
+            img_cap_captions = lstm_generator([features, target_captions])
 
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
@@ -1497,17 +1508,29 @@ class DenseImageCapRCNN:
         else:
             # Network Heads
             # Caption text generator
-            img_cap_captions = lstm_generator_graph(rpn_rois, img_cap_feature_maps,
-                                                    config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE,
-                                                    config.VOCABULARY_SIZE,
-                                                    config.PADDING_SIZE,
-                                                    128,
-                                                    mode)
+            x = PyramidROIAlign([config.POOL_SIZE, config.POOL_SIZE], config.IMAGE_SHAPE,
+                                name="roi_align_generator")([rpn_rois] + img_cap_feature_maps)
+            features = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
+            features = KL.Reshape([self.config.POST_NMS_ROIS_INFERENCE,
+                                   1, features.shape.as_list()[-1]])(features)
+
+            lstm_generator = build_lstm_model(features.shape.as_list()[1:], config, 512)
+
+            last_word = KL.Lambda(lambda x: tf.zeros([self.config.BATCH_SIZE, x.shape[1], x.shape[2]], tf.int32),
+                                  output_shape=features.shape.as_list()[:-1])(features)
+
+            img_cap_captions = []
+            for i in range(self.config.PADDING_SIZE):
+                current_word_prob = lstm_generator([features, last_word])
+                img_cap_captions.append(current_word_prob)
+                last_word = KL.Lambda(lambda x: tf.argmax(x, axis=3),
+                                      input_shape=(self.config.POST_NMS_ROIS_INFERENCE, 1))(current_word_prob)
+
+            img_cap_captions = KL.Concatenate(axis=2)(img_cap_captions)
 
             # Generations
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
-            generations = GenerationMatchLayer(config, name="mrcnn_detection")(
+            generations = GenerationMatchLayer(config, name="imgcap_generations")(
                 [rpn_rois, img_cap_captions, input_image_meta])
 
             model = KM.Model([input_image, input_image_meta],

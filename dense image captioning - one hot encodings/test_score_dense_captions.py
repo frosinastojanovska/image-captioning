@@ -3,16 +3,17 @@ import json
 import pickle
 import numpy as np
 
-import utils
-import dense_model as modellib
-from eval.spice.spice import Spice
-from preprocess import decode_caption
-from eval.meteor.meteor import Meteor
-from train_dense_captions import DenseCapConfig
-from eval.tokenizer.ptbtokenizer import PTBTokenizer
-from train_dense_captions import VisualGenomeDataset
+from .utils import compute_overlaps
+from .preprocess import decode_caption
+from .dense_model import DenseImageCapRCNN
+from .train_dense_captions import DenseCapConfig
+from .train_dense_captions import VisualGenomeDataset
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+from eval.spice.spice import Spice
+from eval.meteor.meteor import Meteor
+from eval.tokenizer.ptbtokenizer import PTBTokenizer
+
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 class InferenceConfig(DenseCapConfig):
@@ -22,8 +23,11 @@ class InferenceConfig(DenseCapConfig):
     IMAGES_PER_GPU = 1
     DETECTION_NMS_THRESHOLD = 0.7
 
-    def __init__(self, vocab_size):
-        super().__init__(vocab_size)
+    # Padding size
+    PADDING_SIZE = 10
+
+    def __init__(self, vocab_size, embedding_weights):
+        super(InferenceConfig, self).__init__(vocab_size, embedding_weights)
 
 
 class DenseCaptioningEvaluator:
@@ -65,7 +69,7 @@ class DenseCaptioningEvaluator:
         :rtype: (numpy.array, list(list(str)))
         """
         assert (thresh > 0)
-        pairwise_iou = utils.compute_overlaps(boxes, boxes)
+        pairwise_iou = compute_overlaps(boxes, boxes)
 
         ix = []
         while True:
@@ -177,7 +181,7 @@ class DenseCaptioningEvaluator:
             indices = np.argsort(log_probs[i])[::-1]
 
             num_detections = log_probs[i].shape[0]
-            overlaps = utils.compute_overlaps(boxes[i], gt_boxes[i])
+            overlaps = compute_overlaps(boxes[i], gt_boxes[i])
             assignments = np.argmax(overlaps, axis=1)
             overlaps_maxs = np.amax(overlaps, axis=1)
             used = set()
@@ -315,6 +319,9 @@ def evaluate_test_captions(results_file_path):
     # Root directory of the project
     root_dir = os.getcwd()
 
+    # Directory to save logs and trained model
+    model_dir = os.path.join(root_dir, "logs")
+
     # Local path to trained weights file
     model_path = os.path.join(root_dir, "img_cap_dense.h5")
 
@@ -327,16 +334,18 @@ def evaluate_test_captions(results_file_path):
     # load one-hot encodings
     id_to_word_file = '../dataset/id_to_word.pickle'
     word_to_id_file = '../dataset/word_to_id.pickle'
+    embedding_matrix_file = '../dataset/embedding_matrix.pickle'
     id_to_word = pickle.load(open(id_to_word_file, 'rb'))
     word_to_id = pickle.load(open(word_to_id_file, 'rb'))
+    embedding_matrix = pickle.load(open(embedding_matrix_file, 'rb'))
 
     with open(image_meta_file_path, 'r', encoding='utf-8') as file:
         image_meta_data = json.loads(file.read())
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
     test_image_ids = image_ids_list[100000:]
-    test_image_ids = [62, 65]
-    config = InferenceConfig(len(word_to_id))
+    # test_image_ids = [62, 65]
+    config = InferenceConfig(len(word_to_id), embedding_matrix)
     config.display()
 
     # Testing dataset
@@ -346,7 +355,10 @@ def evaluate_test_captions(results_file_path):
     dataset_test.prepare()
 
     #  Create model object in inference mode.
-    model = modellib.DenseImageCapRCNN(mode="inference", model_dir=model_path, config=config)
+    model = DenseImageCapRCNN(mode="inference", model_dir=model_dir, config=config)
+
+    # Load weights trained on Visual Genome dense image captioning
+    model.load_weights(model_path, by_name=True)
 
     evaluator = DenseCaptioningEvaluator(model, 'SPICE', dataset_test, id_to_word)
     results = evaluator.evaluate()
