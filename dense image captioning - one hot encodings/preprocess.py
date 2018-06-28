@@ -1,43 +1,45 @@
-from builtins import print
-
-from nltk.tokenize import word_tokenize
-from textblob import Word
-import numpy as np
-from scipy.spatial import distance
-import os
-from gensim.models import KeyedVectors
-from keras.utils import to_categorical
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
-import _pickle
 import json
+import nltk
+import numpy as np
+from string import punctuation
 from collections import Counter
 from nltk.corpus import stopwords
-from string import punctuation
-import nltk
+from nltk.tokenize import word_tokenize
 
 
-def load_corpus(tokens):
-    tokens = ['<UNK>'] + tokens
-    # word_to_vector = dict()
+def load_corpus(tokens, embeddings, embeddings_dim):
     id_to_word = dict()
     word_to_id = dict()
+    embedding_matrix = np.zeros((len(tokens) + 1, embeddings_dim))
+    id_to_word[0] = '<UNK>'
+    word_to_id['<UNK>'] = 0
     for i in range(len(tokens)):
-        # array = np.zeros(len(tokens))
-        # array[i] = 1
-        # word_to_vector[tokens[i]] = array
-        id_to_word[i] = tokens[i]
-        word_to_id[tokens[i]] = i
-    return word_to_id, id_to_word
-    # return word_to_vector, id_to_word
+        id_to_word[i + 1] = tokens[i]
+        word_to_id[tokens[i]] = i + 1
+        embedding_matrix[i + 1, :] = embeddings[tokens[i]]
+    return word_to_id, id_to_word, embedding_matrix
 
 
-def tokenize_corpus(data_file, train, validation):
+def load_embeddings(file_name):
+    embeddings = dict()
+    with open(file_name, 'r', encoding='utf-8') as doc:
+        line = doc.readline()
+        while line != '':
+            line = line.rstrip('\n').lower()
+            parts = line.split(' ')
+            vals = np.array(parts[1:], dtype=np.float)
+            embeddings[parts[0]] = vals
+            line = doc.readline()
+    return embeddings
+
+
+def tokenize_corpus(data_file, train, validation, embeddings):
     with open(data_file, 'r', encoding='utf-8') as doc:
         data = json.loads(doc.read())
     corpus = list()
-    for x in data:
-        if x['id'] in train or x['id'] in validation:
-            regs = x['regions']
+    for data_point in data:
+        if data_point['id'] in train or data_point['id'] in validation:
+            regs = data_point['regions']
             for reg in regs:
                 caption = reg['phrase']
                 tokens = word_tokenize(caption.lower())
@@ -47,37 +49,29 @@ def tokenize_corpus(data_file, train, validation):
                         corpus.append(tag[0])
     frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
     return set([x[0] for x in frequencies if x[1] >= 15 and
+                x[0] in embeddings and
                 x[0] not in punctuation and
                 x[0] not in set(stopwords.words('english'))])
 
 
 def encode_caption(caption, word_to_id):
-    """ convert caption from string to one-hot array """
+    """ convert caption from string to word index array """
     tokens = word_tokenize(caption.lower())
     vector = list()
     for token in tokens:
         encoded_token = encode_word(token, word_to_id)
-        if len(encoded_token) != 0:
+        if encoded_token != 0:
             vector.append(encoded_token)
     return np.array(vector)
 
 
 def encode_word(word, word_to_id):
-    """ convert word to its one-hot vector"""
+    """ convert word to its index"""
     if word in word_to_id.keys():
-        # vec = word_to_vector[word]
         pos = word_to_id[word]
-        vec = np.zeros(len(word_to_id))
-        vec[pos] = 1
     else:
-        '''
-        # vec = word_to_vector['<UNK>']
-        pos = word_to_id['<UNK>']
-        vec = np.zeros(len(word_to_id))
-        vec[pos] = 1
-        '''
-        vec = []
-    return vec
+        pos = 0
+    return pos
 
 
 def decode_caption(vector, id_to_word):
@@ -93,25 +87,3 @@ def decode_word(vec, id_to_word):
     """ convert one-hot encoding vector to the corresponding word """
     inverted = np.argmax(vec)
     return id_to_word[inverted]
-
-
-if __name__ == '__main__':
-    one_hot_encodings, word_mappings = load_corpus(['hello', 'the', 'it', 'she', 'he', 'world', 'name', 'hi'])
-    with open('word_to_vector_pt1.pickle', 'wb') as handle:
-        _pickle.dump(dict(list(one_hot_encodings.items())[:int(len(one_hot_encodings) / 2)]), handle, protocol=4)
-    with open('word_to_vector_pt2.pickle', 'wb') as handle:
-        _pickle.dump(dict(list(one_hot_encodings.items())[int(len(one_hot_encodings) / 2):]), handle, protocol=4)
-    with open('id_to_word.pickle', 'wb') as handle:
-        _pickle.dump(word_mappings, handle, protocol=4)
-    one_hot_encodings_p1 = _pickle.load(open('word_to_vector_pt1.pickle', 'rb'))
-    one_hot_encodings_p2 = _pickle.load(open('word_to_vector_pt2.pickle', 'rb'))
-    one_hot_encodings = dict()
-    one_hot_encodings.update(one_hot_encodings_p1)
-    one_hot_encodings.update(one_hot_encodings_p2)
-    word_mappings = _pickle.load(open('id_to_word.pickle', 'rb'))
-    print('===Encode===')
-    encoded_caption = encode_caption('Hello world xxx', one_hot_encodings)
-    print(encoded_caption)
-    print('===Decode===')
-    decoded_caption = decode_caption(encoded_caption, word_mappings)
-    print(decoded_caption)

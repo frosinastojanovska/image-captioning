@@ -1,16 +1,16 @@
 import os
 import time
 import json
+import pickle
 import numpy as np
 import skimage.io as skiimage_io
 import skimage.color as skimage_color
 from keras.preprocessing.sequence import pad_sequences
 
-import utils
+from utils import Dataset
 from config import Config
-import dense_model as modellib
-from preprocess import encode_caption, load_corpus, tokenize_corpus
-import _pickle
+from dense_model import DenseImageCapRCNN
+from preprocess import encode_caption, load_corpus, tokenize_corpus, load_embeddings
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
@@ -23,8 +23,7 @@ class DenseCapConfig(Config):
     # Give the configuration a recognizable name
     NAME = "dense image captioning"
 
-    # Train on 1 GPU and 8 images per GPU. We can put multiple images on each
-    # GPU because the images are small. Batch size is 8 (GPUs * images/GPU).
+    # Train on 1 GPU and n images per GPU. Batch size is n (GPUs * images/GPU).
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
 
@@ -34,16 +33,18 @@ class DenseCapConfig(Config):
     # Padding size
     PADDING_SIZE = 10
 
-    def __init__(self, vocab_size):
-        super().__init__()
+    def __init__(self, vocab_size, embedding_weights):
+        super(DenseCapConfig, self).__init__()
         # Vocabulary size
         self.VOCABULARY_SIZE = vocab_size
+        self.EMBEDDING_WEIGHTS = embedding_weights
+        self.EMBEDDING_SIZE = embedding_weights.shape[1]
 
 
-class VisualGenomeDataset(utils.Dataset):
-    def __init__(self, word_to_id, padding_size):
-        super().__init__()
-        self.word_to_id = word_to_id
+class VisualGenomeDataset(Dataset):
+    def __init__(self, words_to_ids, padding_size):
+        super(VisualGenomeDataset, self).__init__()
+        self.word_to_id = words_to_ids
         self.padding_size = padding_size
 
     def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
@@ -72,13 +73,12 @@ class VisualGenomeDataset(utils.Dataset):
             )
 
     def image_reference(self, image_id):
-        """Return a link to the image in the Stanford Website."""
+        """ Return a link to the image in the Stanford Website. """
         info = self.image_info[image_id]
         return "https://cs.stanford.edu/people/rak248/VG_100K/{}.jpg".format(info["id"])
 
     def load_image(self, image_id):
-        """Load the specified image and return a [H,W,3] Numpy array.
-        """
+        """ Load the specified image and return a [H,W,3] Numpy array. """
         # Load image
         image = skiimage_io.imread(self.image_info[image_id]['path'])
         # If grayscale. Convert to RGB for consistency.
@@ -87,8 +87,7 @@ class VisualGenomeDataset(utils.Dataset):
         return image
 
     def load_captions_and_rois(self, image_id):
-        """Generate instance captions of the given image ID.
-        """
+        """ Generate instance captions of the given image ID. """
         image_info = self.image_info[image_id]
         rois = []
         caps = []
@@ -102,6 +101,7 @@ class VisualGenomeDataset(utils.Dataset):
         return rois, captions
 
     def load_original_captions_and_rois(self, image_id):
+        """ Returns string instance captions of the given image ID. """
         image_info = self.image_info[image_id]
         rois = np.array(image_info['rois'])
         captions = image_info['captions']
@@ -113,16 +113,6 @@ class VisualGenomeDataset(utils.Dataset):
 
 
 if __name__ == '__main__':
-    '''
-    import keras.backend as K
-    K.clear_session()
-    import tensorflow as tf
-    config = tf.ConfigProto()
-    config.gpu_options.per_process_gpu_memory_fraction = 0.5  # maximun alloc gpu50% of MEM
-    config.gpu_options.allow_growth = True  # allocate dynamically
-    sess = tf.Session(config=config)
-    '''
-
     # Root directory of the project
     ROOT_DIR = os.getcwd()
 
@@ -132,6 +122,8 @@ if __name__ == '__main__':
     # Local path to trained weights file
     COCO_MODEL_PATH = os.path.join(ROOT_DIR, "../rcnn_coco.h5")
 
+    embeddings_file_path = '../dataset/glove.6B.300d.txt'
+
     data_directory = '../dataset/visual genome/'
     image_meta_file_path = '../dataset/image_data.json'
     data_file_path = '../dataset/region_descriptions.json'
@@ -140,45 +132,36 @@ if __name__ == '__main__':
         image_meta_data = json.loads(file.read())
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
-    # image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
-
     train_image_ids = image_ids_list[:90000]
     val_image_ids = image_ids_list[90000:100000]
     test_image_ids = image_ids_list[100000:]
 
-    # load one-hot encodings
-    # word_to_vector_file_pt1 = '../dataset/word_to_vector_pt1.pickle'
-    # word_to_vector_file_pt2 = '../dataset/word_to_vector_pt2.pickle'
+    # load word ids
     id_to_word_file = '../dataset/id_to_word.pickle'
     word_to_id_file = '../dataset/word_to_id.pickle'
-    '''
-    if not os.path.exists(word_to_vector_file_pt1) \
-            or not os.path.exists(word_to_vector_file_pt2) \
-            or not os.path.exists(id_to_word_file):
-    '''
-    if not os.path.exists(id_to_word_file) or not os.path.exists(word_to_id_file):
-        tokens = tokenize_corpus(data_file_path, train_image_ids, val_image_ids)
-        # word_to_vector, id_to_word = load_corpus(list(tokens))
-        word_to_id, id_to_word = load_corpus(list(tokens))
-        '''
-        with open(word_to_vector_file_pt1, 'wb') as handle:
-           _pickle.dump(dict(list(word_to_vector.items())[:int(len(word_to_vector) / 2)]), handle, protocol=4)
-        with open(word_to_vector_file_pt2, 'wb') as handle:
-           _pickle.dump(dict(list(word_to_vector.items())[int(len(word_to_vector) / 2):]), handle, protocol=4)
-        '''
-        with open(id_to_word_file, 'wb') as handle:
-           _pickle.dump(id_to_word, handle, protocol=4)
-        with open(word_to_id_file, 'wb') as handle:
-            _pickle.dump(word_to_id, handle, protocol=4)
+    embedding_matrix_file = '../dataset/embedding_matrix.pickle'
+
+    if not os.path.exists(id_to_word_file) or not os.path.exists(word_to_id_file) \
+            or not os.path.exists(embedding_matrix_file):
+        embeddings = load_embeddings(embeddings_file_path)
+        tokens = tokenize_corpus(data_file_path, train_image_ids, val_image_ids, embeddings)
+        word_to_id, id_to_word, embedding_matrix = load_corpus(list(tokens), embeddings, 300)
+
+        with open(id_to_word_file, 'wb') as f:
+            pickle.dump(id_to_word, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(word_to_id_file, 'wb') as f:
+            pickle.dump(word_to_id, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(embedding_matrix_file, 'wb') as f:
+            pickle.dump(embedding_matrix, f, protocol=pickle.HIGHEST_PROTOCOL)
     else:
-        # word_to_vector_pt1 = _pickle.load(open(word_to_vector_file_pt1, 'rb'))
-        # word_to_vector_pt2 = _pickle.load(open(word_to_vector_file_pt2, 'rb'))
-        # word_to_vector = dict()
-        # word_to_vector.update(word_to_vector_pt1)
-        # word_to_vector.update(word_to_vector_pt2)
-        id_to_word = _pickle.load(open(id_to_word_file, 'rb'))
-        word_to_id = _pickle.load(open(word_to_id_file, 'rb'))
-    config = DenseCapConfig(len(id_to_word))
+        with open(id_to_word_file, 'rb') as f:
+            id_to_word = pickle.load(f)
+        with open(word_to_id_file, 'rb') as f:
+            word_to_id = pickle.load(f)
+        with open(embedding_matrix_file, 'rb') as f:
+            embedding_matrix = pickle.load(f)
+
+    config = DenseCapConfig(len(id_to_word), embedding_matrix)
     config.display()
 
     # Training dataset
@@ -196,16 +179,15 @@ if __name__ == '__main__':
     init_with = 'coco'
 
     # Create model in training mode
-    model = modellib.DenseImageCapRCNN(mode="training", config=config,
-                                       model_dir=MODEL_DIR)
+    model = DenseImageCapRCNN(mode="training", config=config,
+                              model_dir=MODEL_DIR)
 
     if init_with == "last":
         # Load the last model you trained and continue training
         model.load_weights(model.find_last()[1], by_name=True)
     else:
         # Load weights trained on MS COCO, but skip layers that
-        # are different due to the different
-        # TODO: correct this!!!!!!!!!!!!!
+        # are different
         model.load_weights(COCO_MODEL_PATH, by_name=True)
 
     start_time = time.time()
@@ -214,7 +196,7 @@ if __name__ == '__main__':
     # pass a regular expression to select which layers to
     # train by name pattern.
     model.train(dataset_train, dataset_val,
-                learning_rate=config.LEARNING_RATE / 10,
+                learning_rate=config.LEARNING_RATE,
                 epochs=250,
                 layers="lstm_only")
 

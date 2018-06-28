@@ -52,9 +52,6 @@ class Config(object):
     # are based on a Resnet101 backbone.
     BACKBONE_STRIDES = [4, 8, 16, 32, 64]
 
-    # Number of classification classes (including background)
-    NUM_CLASSES = 1  # Override in sub-classes
-
     # Length of square anchor side in pixels
     RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
 
@@ -78,12 +75,7 @@ class Config(object):
     POST_NMS_ROIS_TRAINING = 2000
     POST_NMS_ROIS_INFERENCE = 1000
 
-    # If enabled, resizes instance masks to a smaller size to reduce
-    # memory load. Recommended when using high-resolution images.
-    USE_MINI_MASK = True
-    MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
-
-    # Input image resing
+    # Input image resizing
     # Images are resized such that the smallest side is >= IMAGE_MIN_DIM and
     # the longest side is <= IMAGE_MAX_DIM. In case both conditions can't
     # be satisfied together the IMAGE_MAX_DIM is enforced.
@@ -146,6 +138,15 @@ class Config(object):
 
     # Padding size
     PADDING_SIZE = 15
+
+    # Embedding size
+    EMBEDDING_SIZE = 100
+
+    # Embedding matrix
+    EMBEDDING_WEIGHTS = None
+
+    # Vocabulary size
+    VOCABULARY_SIZE = 0
 
     def __init__(self):
         """Set values of computed attributes."""
