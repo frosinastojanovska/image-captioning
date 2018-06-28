@@ -1,9 +1,9 @@
 import os
 import skimage.io
 
-import dense_model as modellib
+from .dense_model import DenseImageCapRCNN
 import numpy as np
-from config import Config
+from .config import Config
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
@@ -14,7 +14,7 @@ ROOT_DIR = os.getcwd()
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-MODEL_PATH = os.path.join(ROOT_DIR, "img_cap_dense.h5")
+MODEL_PATH = os.path.join(ROOT_DIR, "feature_generation/img_cap_dense.h5")
 
 # Directory of images to run detection on
 IMAGE_DIR = os.path.join(ROOT_DIR, "../dataset/visual genome")
@@ -57,19 +57,24 @@ config = InferenceConfig()
 config.display()
 
 
-def generate_features(image_path):
+def load_model():
     # Create model object in inference mode.
-    model = modellib.DenseImageCapRCNN(mode="inference", model_dir=MODEL_DIR, config=config)
+    model = DenseImageCapRCNN(mode="inference", model_dir=MODEL_DIR, config=config)
 
     # Load weights trained on Visual Genome dense image captioning
     model.load_weights(MODEL_PATH, by_name=True)
 
+    return model
+
+
+def generate_features(image_path, model):
     # Run detection
     image = skimage.io.imread(image_path)
     results = model.generate_captions([image], verbose=1)
     features = np.mean(results[0]['features'], axis=0)
-    return features
+    return features.flatten()
+
 
 if __name__ == '__main__':
     file_name = '107932.jpg'
-    generate_features(os.path.join(IMAGE_DIR, file_name))
+    generate_features(os.path.join(IMAGE_DIR, file_name), load_model())

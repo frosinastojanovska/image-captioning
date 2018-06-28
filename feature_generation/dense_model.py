@@ -21,13 +21,15 @@ import keras.engine as KE
 import keras.models as KM
 import math
 
-import utils
+from . import utils
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 
+global graph
+graph = tf.get_default_graph()
 
 ############################################################
 #  Utility Functions
@@ -1886,9 +1888,9 @@ class DenseImageCapRCNN:
             log("molded_images", molded_images)
             log("image_metas", image_metas)
         # Run caption generation
-        generations, img_cap_captions, features, \
-            rpn_rois, rpn_class, rpn_bbox = \
-            self.keras_model.predict([molded_images, image_metas], verbose=0)
+        with graph.as_default():
+            generations, img_cap_captions, features, rpn_rois, rpn_class, rpn_bbox = \
+                self.keras_model.predict([molded_images, image_metas], verbose=0)
         # Process detections
         results = []
         for i, image in enumerate(images):
