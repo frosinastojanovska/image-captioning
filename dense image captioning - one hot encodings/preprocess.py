@@ -60,7 +60,8 @@ def encode_caption(caption, word_to_id):
     vector = list()
     for token in tokens:
         encoded_token = encode_word(token, word_to_id)
-        vector.append(encoded_token)
+        if encoded_token != 0:
+            vector.append(encoded_token)
     return np.array(vector)
 
 

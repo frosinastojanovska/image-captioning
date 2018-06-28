@@ -749,10 +749,10 @@ def lstm_generator_graph(features, gt_captions, config, units):
 
     concatenated_output = KL.Concatenate(axis=-1)([features, rnn])
 
-    captions = KL.TimeDistributed(KL.Dense(1024, activation='relu', name='imgcap_lstm_d1'),
-                                  name='imgcap_lstm_td4')(concatenated_output)
-    captions = KL.TimeDistributed(KL.Dense(config.VOCABULARY_SIZE, activation='softmax', name='imgcap_lstm_d2'),
-                                  name='imgcap_lstm_td5')(captions)
+    captions = KL.TimeDistributed(KL.Dense(1024, activation='relu', input_shape=concatenated_output.shape,
+                                           name='imgcap_lstm_d1'), name='imgcap_lstm_td4')(concatenated_output)
+    captions = KL.TimeDistributed(KL.Dense(config.VOCABULARY_SIZE, activation='softmax', input_shape=captions.shape,
+                                           name='imgcap_lstm_d2'), name='imgcap_lstm_td5')(captions)
 
     return captions
 
@@ -769,10 +769,71 @@ def build_lstm_model(features_input, config, units):
     Returns a Keras Model object. The model output, when called, is:
     generated_words: [batch, NUMBER OF ROIS, PADDING_SIZE, VOCABULARY_SIZE] Words of captions for each ROI.
     """
-    features = KL.Input(shape=features_input, name="input_imgcap_lstm_features")
-    gt_captions = KL.Input(shape=features_input[:-1], name="input_imgcap_lstm_gt_captions")
+    features = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name="input_imgcap_lstm_features")
+    gt_captions = KL.Input(shape=features_input[:-1],
+                           batch_shape=[config.BATCH_SIZE] + features_input[:-1], name="input_imgcap_lstm_gt_captions")
     outputs = lstm_generator_graph(features, gt_captions, config, units)
     return KM.Model([features, gt_captions], outputs, name="imgcap_lstm_model")
+
+
+class PredictRoiCaptionLayer(KE.Layer):
+    """ Layer for predicting caption of one ROI given its features.
+
+    feature: feature vector for the given ROI [BATCH_SIZE, 1, feature_size]
+    lstm_units: number of lstm units (int)
+    lstm_generator: Keras lstm inference generation model
+    config: configuration object
+
+    Returns Tensor with generated caption word probabilities
+    """
+
+    def __init__(self, lstm_units, config, **kwargs):
+        super(PredictRoiCaptionLayer, self).__init__(**kwargs)
+        self.lstm_units = lstm_units
+        self.config = config
+
+        self.embedd = KL.Embedding(input_dim=self.config.VOCABULARY_SIZE,
+                                   output_dim=self.config.EMBEDDING_SIZE,
+                                   weights=[self.config.EMBEDDING_WEIGHTS],
+                                   trainable=False,
+                                   name='imgcap_embedding_layer')
+        self.lstm = KL.LSTM(units=self.lstm_units, return_sequences=True, recurrent_dropout=0.2,
+                            return_state=True, name='imgcap_lstm_lstm1')
+        self.dense1 = KL.Dense(1024, activation='relu', name='imgcap_lstm_d1')
+        self.dense2 = KL.Dense(self.config.VOCABULARY_SIZE, activation='softmax', name='imgcap_lstm_d2')
+
+    def call(self, inputs):
+        feature = inputs
+        last_word = KL.Lambda(lambda x: tf.zeros([self.config.BATCH_SIZE, x.shape[1]], tf.float32),
+                              output_shape=feature.shape.as_list()[:-1])(feature)
+        last_state_h = KL.Lambda(lambda x: tf.zeros([self.config.BATCH_SIZE, self.lstm_units], tf.float32),
+                                 output_shape=(self.lstm_units,))(last_word)
+        last_state_c = KL.Lambda(lambda x: tf.zeros([self.config.BATCH_SIZE, self.lstm_units], tf.float32),
+                                 output_shape=(self.lstm_units,))(last_word)
+
+        img_cap_caption = []
+        for j in range(self.config.PADDING_SIZE):
+            embedd_output = self.embedd(last_word[0:])
+            concatenated_input = KL.Concatenate(axis=-1)([feature, embedd_output])
+            rnn, new_state_h, new_state_c = self.lstm(concatenated_input, initial_state=[last_state_h, last_state_c])
+            concatenated_output = KL.Concatenate(axis=-1)([feature, rnn])
+
+            concatenated_output = KL.Lambda(lambda x: tf.squeeze(x, axis=[1]))(concatenated_output)
+            current_word_prob = self.dense1(concatenated_output)
+            current_word_prob = self.dense2(current_word_prob)
+
+            img_cap_caption.append(current_word_prob)
+            last_word = KL.Lambda(lambda x: tf.cast(tf.expand_dims(tf.argmax(x, axis=-1), axis=-1),
+                                                    tf.float32))(current_word_prob)
+            last_state_h = new_state_h
+            last_state_c = new_state_c
+
+        img_cap_caption = KL.Lambda(lambda x: tf.stack(x, axis=1))(img_cap_caption)
+
+        return img_cap_caption
+
+    def compute_output_shape(self, input_shape):
+        return None, self.config.PADDING_SIZE, self.config.VOCABULARY_SIZE
 
 
 ############################################################
@@ -1480,8 +1541,7 @@ class DenseImageCapRCNN:
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
             lstm_generator = build_lstm_model(features.shape.as_list()[1:], config, 512)
-            # img_cap_captions = lstm_generator_graph(features, target_captions, config, 512)
-            img_cap_captions = lstm_generator([features, target_captions])
+            img_cap_caption = lstm_generator([features, target_captions])
 
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
@@ -1492,7 +1552,7 @@ class DenseImageCapRCNN:
             rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
                 [input_rpn_bbox, input_rpn_match, rpn_bbox])
             imgcap_loss = KL.Lambda(lambda x: imgcap_caption_loss_graph(*x), name="imgcap_loss")(
-                [target_captions, img_cap_captions])
+                [target_captions, img_cap_caption])
 
             # Model
             inputs = [input_image, input_image_meta,
@@ -1501,7 +1561,7 @@ class DenseImageCapRCNN:
                 inputs.append(input_rois)
 
             outputs = [rpn_class_logits, rpn_class, rpn_bbox,
-                       img_cap_captions,
+                       img_cap_caption,
                        rpn_rois, output_rois,
                        rpn_class_loss, rpn_bbox_loss, imgcap_loss]
             model = KM.Model(inputs, outputs, name='dense_image_cap_rcnn')
@@ -1510,31 +1570,24 @@ class DenseImageCapRCNN:
             # Caption text generator
             x = PyramidROIAlign([config.POOL_SIZE, config.POOL_SIZE], config.IMAGE_SHAPE,
                                 name="roi_align_generator")([rpn_rois] + img_cap_feature_maps)
-            features = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1'), name='imgcap_lstm_td1')(x)
+            features = KL.TimeDistributed(KL.Flatten(name='imgcap_lstm_f1', batch_input_shape=x.shape),
+                                          name='imgcap_lstm_td1')(x)
             features = KL.Reshape([self.config.POST_NMS_ROIS_INFERENCE,
                                    1, features.shape.as_list()[-1]])(features)
 
-            lstm_generator = build_lstm_model(features.shape.as_list()[1:], config, 512)
+            features = KL.Lambda(lambda x: tf.reshape(x, [config.BATCH_SIZE] + x.shape.as_list()[1:]))(features)
 
-            last_word = KL.Lambda(lambda x: tf.zeros([self.config.BATCH_SIZE, x.shape[1], x.shape[2]], tf.int32),
-                                  output_shape=features.shape.as_list()[:-1])(features)
+            lstm_units = 512
 
-            img_cap_captions = []
-            for i in range(self.config.PADDING_SIZE):
-                current_word_prob = lstm_generator([features, last_word])
-                img_cap_captions.append(current_word_prob)
-                last_word = KL.Lambda(lambda x: tf.argmax(x, axis=3),
-                                      input_shape=(self.config.POST_NMS_ROIS_INFERENCE, 1))(current_word_prob)
-
-            img_cap_captions = KL.Concatenate(axis=2)(img_cap_captions)
+            predicted_captions = KL.TimeDistributed(PredictRoiCaptionLayer(lstm_units, self.config))(features)
 
             # Generations
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
             generations = GenerationMatchLayer(config, name="imgcap_generations")(
-                [rpn_rois, img_cap_captions, input_image_meta])
+                [rpn_rois, predicted_captions, input_image_meta])
 
             model = KM.Model([input_image, input_image_meta],
-                             [generations, img_cap_captions,
+                             [generations, predicted_captions,
                               rpn_rois, rpn_class, rpn_bbox],
                              name='rcnn_imgcap')
 
