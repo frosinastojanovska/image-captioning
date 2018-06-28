@@ -8,12 +8,14 @@ from feature_generation.generate_roi_features import load_model
 import os
 os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
+
 def train(batch_size=128,
           epochs=100,
           data_dir="../dataset/",
           weights_path=None,
           mode="train",
-          model=None):
+          model=None,
+          dataset='flickr8k'):
     '''Method to train the image caption generator
     weights_path is the path to the .h5 file where weights from the previous
     run are saved (if available)'''
@@ -26,7 +28,8 @@ def train(batch_size=128,
     print("steps_per_epoch = ", steps_per_epoch)
     train_data_generator = train_generator(config_dict=config_dict,
                                            data_dir=data_dir,
-                                           model=model)
+                                           model=model,
+                                           dataset=dataset)
 
     model = create_model(config_dict=config_dict)
 
@@ -64,4 +67,5 @@ if __name__ == '__main__':
           data_dir="dataset/",
           weights_path=None,
           mode="train",
-          model=load_model())
+          model=load_model(),
+          dataset='flickr8k')

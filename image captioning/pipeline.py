@@ -11,8 +11,7 @@ from feature_generation.generate_roi_features import generate_features
 def _get_captions_text(data_dir="/home/shagun/projects/Image-Caption-Generator/data/",
                        mode="all"):
     '''Method to return a list of all the caption texts'''
-    image_captions_dict = read_captions(data_dir=data_dir,
-                                        mode=mode)
+    image_captions_dict = read_captions(dataset='flickr8k', data_dir=data_dir, mode=mode)
     captions = []
     for key_value in image_captions_dict.items():
         for caption in key_value[1]:
@@ -56,28 +55,31 @@ def generate_config(data_dir="/home/shagun/projects/Image-Caption-Generator/data
     return config_dict
 
 
-def train_generator(config_dict, data_dir, model):
+def train_generator(config_dict, data_dir, model, dataset):
     '''Method to prepare the training dataset for feeding into the model'''
     return data_generator(config_dict=config_dict,
                           data_dir=data_dir,
                           mode="train",
-                          model=model)
+                          model=model,
+                          dataset=dataset)
 
 
-def test_generator(config_dict, data_dir, model):
+def test_generator(config_dict, data_dir, model, dataset):
     '''Method to prepare the testing dataset for feeding into the model'''
     return data_generator(config_dict=config_dict,
                           data_dir=data_dir,
                           mode="test",
-                          model=model)
+                          model=model,
+                          dataset=dataset)
 
 
-def debug_generator(config_dict, data_dir, model):
+def debug_generator(config_dict, data_dir, model, dataset):
     '''Method to prepare the overfitting dataset for feeding into the model'''
     return data_generator(config_dict=config_dict,
                           data_dir=data_dir,
                           mode="debug",
-                          model=model)
+                          model=model,
+                          dataset=dataset)
 
 
 def get_tokenizer(config_dict, data_dir):
@@ -89,30 +91,19 @@ def get_tokenizer(config_dict, data_dir):
     return tokenizer
 
 
-def data_generator(config_dict, data_dir, mode, model):
+def data_generator(config_dict, data_dir, mode, model, dataset):
     '''Method to prepare the data for feeding into the model'''
     batch_size = config_dict["batch_size"]
-    # tokenizer = Tokenizer(num_words=config_dict["vocabulary_size"])
-    # texts = _get_captions_text(data_dir=data_dir,
-    #                            mode=mode)
-    # tokenizer.fit_on_texts(texts=texts)
-    tokenizer = get_tokenizer(config_dict=config_dict,
-                              data_dir=data_dir)
+    tokenizer = get_tokenizer(config_dict=config_dict, data_dir=data_dir)
 
-    image_list = read_image_list(mode=mode, data_dir=data_dir)
-    # image_encoding_dict = pickle.load(
-    #     open(data_dir + "model/" + mode + "_image_encoding.pkl", "rb")
-    # )
+    image_list = read_image_list(dataset=dataset, mode=mode, data_dir=data_dir)
 
-    image_captions_dict = read_captions(data_dir=data_dir)
-    # images_encoding = []
+    image_captions_dict = read_captions(dataset=dataset, data_dir=data_dir)
     image_paths = []
     captions = []
     for (index, image_name) in enumerate(image_list):
-        # current_image_encoding = generate_features(data_dir + 'flickr8k/' + image_name, model)
-        current_image_path = data_dir + 'flickr8k/' + image_name
+        current_image_path = data_dir + dataset + '/' + image_name
         for caption in image_captions_dict[image_name]:
-            # images_encoding.append(current_image_encoding)
             image_paths.append(current_image_path)
             captions.append(caption)
     captions = tokenizer.texts_to_sequences(texts=captions)
