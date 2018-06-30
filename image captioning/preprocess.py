@@ -59,7 +59,7 @@ def read_captions_flickr(data_dir, mode):
     if mode == "all":
         return image_caption_dict
     else:
-        image_name_list = read_image_list(dataset='flick8k', mode=mode, data_dir=data_dir)
+        image_name_list = read_image_list(dataset='flickr8k', mode=mode, data_dir=data_dir)
         filtered_image_caption_list = {}
         for image_name in image_name_list:
             filtered_image_caption_list[image_name] = image_caption_dict[image_name]

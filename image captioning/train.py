@@ -23,7 +23,7 @@ def train(batch_size=128,
     config_dict = generate_config(data_dir=data_dir,
                                   mode=mode)
     config_dict['batch_size'] = batch_size
-    steps_per_epoch = config_dict["total_number_of_examples"] // batch_size
+    steps_per_epoch = 200  # config_dict["total_number_of_examples"] // batch_size
 
     print("steps_per_epoch = ", steps_per_epoch)
     train_data_generator = train_generator(config_dict=config_dict,
@@ -57,7 +57,7 @@ def train(batch_size=128,
         generator=train_data_generator,
         steps_per_epoch=steps_per_epoch,
         epochs=epochs,
-        verbose=2,
+        verbose=1,
         callbacks=callbacks_list)
 
 

@@ -5,7 +5,7 @@ from .dense_model import DenseImageCapRCNN
 import numpy as np
 from .config import Config
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 # Root directory of the project
@@ -14,7 +14,7 @@ ROOT_DIR = os.getcwd()
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 
 # Local path to trained weights file
-MODEL_PATH = os.path.join(ROOT_DIR, "feature_generation/img_cap_dense.h5")
+MODEL_PATH = os.path.join(ROOT_DIR, "img_cap_dense.h5")
 
 # Directory of images to run detection on
 IMAGE_DIR = os.path.join(ROOT_DIR, "../dataset/visual genome")
@@ -70,7 +70,7 @@ def load_model():
 def generate_features(image_path, model):
     # Run detection
     image = skimage.io.imread(image_path)
-    results = model.generate_captions([image], verbose=1)
+    results = model.generate_captions([image], verbose=0)
     features = np.mean(results[0]['features'], axis=0)
     return features.flatten()
 

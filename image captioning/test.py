@@ -67,11 +67,12 @@ def gen_captions(config,
 def predict(image_name,
             data_dir="/home/shagun/projects/Image-Caption-Generator/data/",
             weights_path=None,
-            mode="test"):
+            mode="test",
+            dataset='flickr8k'):
     '''Method to predict the caption for a given image.
     weights_path is the path to the .h5 file (model)'''
 
-    image_path = data_dir + "flickr8k/" + image_name
+    image_path = data_dir + dataset + "/" + image_name
     model = load_model()
     embedding = generate_features(image_path, model)
     image_embeddings = [embedding]
@@ -83,7 +84,7 @@ def predict(image_name,
     model = create_model(config_dict=config_dict,
                          compile_model=False)
 
-    model.load_weights("image captioning/model/" + weights_path)
+    model.load_weights("model/" + weights_path)
 
     tokenizer = get_tokenizer(config_dict=config_dict,
                               data_dir=data_dir)
@@ -95,13 +96,13 @@ def predict(image_name,
                      model=model,
                      image_embedding=image_embedding,
                      tokenizer=tokenizer,
-                     num_captions=2,
+                     num_captions=5,
                      index_to_word=index_to_word
                      )
 
 
 if __name__ == '__main__':
     weights_path = "weights-01.hdf5"
-    image_name = '19212715_20476497a3.jpg'
-    data_dir = "dataset/"
-    predict(image_name=image_name, data_dir=data_dir, weights_path=weights_path, mode="debug")
+    image_name = '1000.jpg'
+    data_dir = "../dataset/"
+    predict(image_name=image_name, data_dir=data_dir, weights_path=weights_path, mode="debug", dataset='visual genome')
