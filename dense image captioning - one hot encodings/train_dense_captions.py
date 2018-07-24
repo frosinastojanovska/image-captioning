@@ -120,7 +120,7 @@ if __name__ == '__main__':
     MODEL_DIR = os.path.join(ROOT_DIR, "logs_dense_img_cap")
 
     # Local path to trained weights file
-    COCO_MODEL_PATH = os.path.join(ROOT_DIR, "../rcnn_coco.h5")
+    COCO_MODEL_PATH = os.path.join(ROOT_DIR, "../mask_rcnn_coco.h5")
 
     embeddings_file_path = '../dataset/glove.6B.300d.txt'
 
@@ -133,7 +133,9 @@ if __name__ == '__main__':
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
     train_image_ids = image_ids_list[:90000]
+    train_image_ids = [1, 2, 55, 56]
     val_image_ids = image_ids_list[90000:100000]
+    val_image_ids = [65, 77]
     test_image_ids = image_ids_list[100000:]
 
     # load word ids
@@ -190,6 +192,8 @@ if __name__ == '__main__':
         # are different
         model.load_weights(COCO_MODEL_PATH, by_name=True)
 
+    print(model.keras_model.summary())
+
     start_time = time.time()
     # Fine tune all layers
     # Passing layers="all" trains all layers. You can also
@@ -198,7 +202,7 @@ if __name__ == '__main__':
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE,
                 epochs=250,
-                layers="lstm_only")
+                layers="caption_only")
 
     end_time = time.time()
     print(end_time - start_time)
