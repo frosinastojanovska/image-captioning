@@ -10,7 +10,7 @@
 # Modified to work with Python 3 (in 2018) by:
 # Frosina Stojanovska
 
-from cider_scorer import CiderScorer
+from .cider_scorer import CiderScorer
 import pdb
 
 
