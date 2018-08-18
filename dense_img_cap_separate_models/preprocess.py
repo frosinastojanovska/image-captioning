@@ -46,9 +46,9 @@ def tokenize_corpus(data_file, train, embeddings):
                 for tag in tokens:
                     corpus.append(tag)
     frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
-    return set([x[0] for x in frequencies if x[1] >= 15 and
-                x[0] in embeddings and
-                x[0] not in punctuation])
+    return set([x[0] for x in frequencies if x[1] >= 15 and x[0] in embeddings and x[0] not in punctuation and
+                x[0] not in set(stopwords.words('english'))])
+    # return set([x[0] for x in frequencies if x[0] in embeddings])
 
 
 def encode_caption(caption, word_to_id):
@@ -62,6 +62,17 @@ def encode_caption(caption, word_to_id):
     return np.array(vector)
 
 
+def encode_caption_v2(caption, word_to_id):
+    """ convert caption from string to one-hot array """
+    tokens = word_tokenize(caption.lower())
+    vector = list()
+    for token in tokens:
+        encoded_token = encode_word_v2(token, word_to_id)
+        if len(encoded_token) != 0 and encoded_token[0] != 1:
+            vector.append(encoded_token)
+    return np.array(vector)
+
+
 def encode_word(word, word_to_id):
     """ convert word to its index"""
     if word in word_to_id.keys():
@@ -69,6 +80,19 @@ def encode_word(word, word_to_id):
     else:
         pos = 0
     return pos
+
+
+def encode_word_v2(word, word_to_id):
+    """ convert word to its one-hot vector"""
+    if word in word_to_id.keys():
+        pos = word_to_id[word]
+        vec = np.zeros(len(word_to_id))
+        vec[pos] = 1
+    else:
+        pos = word_to_id['<UNK>']
+        vec = np.zeros(len(word_to_id))
+        vec[pos] = 1
+    return vec
 
 
 def decode_caption(vector, id_to_word):

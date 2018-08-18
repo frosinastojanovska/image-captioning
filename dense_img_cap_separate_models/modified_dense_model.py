@@ -650,6 +650,7 @@ class GenerationMatchLayer(KE.Layer):
 
     def __init__(self, config=None, **kwargs):
         super(GenerationMatchLayer, self).__init__(**kwargs)
+        self.supports_masking = True
         self.config = config
 
     def call(self, inputs):
@@ -1265,7 +1266,7 @@ def data_generator(dataset, config, shuffle=True, augment=True, random_rois=0,
                 batch_rpn_match = np.zeros(
                     [batch_size, anchors.shape[0], 1], dtype=rpn_match.dtype)
                 batch_rpn_bbox = np.zeros(
-                    [batch_size, config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4], dtype=rpn_bbox.dtype                )
+                    [batch_size, config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4], dtype=rpn_bbox.dtype)
                 batch_images = np.zeros(
                     (batch_size,) + image.shape, dtype=np.float32)
                 batch_gt_captions = np.zeros(
@@ -1577,7 +1578,7 @@ class DenseImageCapRCNN:
         exclude: list of layer names to exclude
         """
         import h5py
-        from keras.engine import topology
+        from keras.engine import saving as topology
 
         if exclude:
             by_name = True

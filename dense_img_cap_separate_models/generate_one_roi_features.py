@@ -70,6 +70,6 @@ def generate_features(dataset, image_id, model):
     image = dataset.load_image(image_id)
     rois, _ = dataset.load_captions_and_rois(image_id)
     rois = np.expand_dims(rois, axis=0)
-    results = model.generate_captions([image], rois, verbose=1)
+    results = model.generate_captions([image], rois, verbose=0)
     features = results[0]['features']
     return features
