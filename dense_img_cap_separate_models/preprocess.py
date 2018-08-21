@@ -1,5 +1,4 @@
 import json
-import nltk
 import numpy as np
 from string import punctuation
 from collections import Counter
@@ -10,13 +9,22 @@ from nltk.tokenize import word_tokenize
 def load_corpus(tokens, embeddings, embeddings_dim):
     id_to_word = dict()
     word_to_id = dict()
-    embedding_matrix = np.zeros((len(tokens) + 1, embeddings_dim))
-    id_to_word[0] = '<UNK>'
-    word_to_id['<UNK>'] = 0
+    embedding_matrix = np.zeros((len(tokens) + 3, embeddings_dim))
+    id_to_word[0] = ''
+    word_to_id[''] = 0
+
+    # Add <start> and <end> tokens and initialize them randomly in range [-0.5, 0.5]
+    embeddings['<start>'] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
+    id_to_word[1] = '<start>'
+    word_to_id['<start>'] = 1
+    embeddings['<end>'] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
+    id_to_word[2] = '<end>'
+    word_to_id['<end>'] = 2
+
     for i in range(len(tokens)):
-        id_to_word[i + 1] = tokens[i]
-        word_to_id[tokens[i]] = i + 1
-        embedding_matrix[i + 1, :] = embeddings[tokens[i]]
+        id_to_word[i + 3] = tokens[i]
+        word_to_id[tokens[i]] = i + 3
+        embedding_matrix[i + 3, :] = embeddings[tokens[i]]
     return word_to_id, id_to_word, embedding_matrix
 
 

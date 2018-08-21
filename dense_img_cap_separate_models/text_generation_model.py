@@ -32,20 +32,21 @@ class DenseCapConfig(Config):
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
 
-    BATCH_SIZE = 1024
+    BATCH_SIZE = 10
 
     STEPS_PER_EPOCH = 500
     VALIDATION_STEPS = 50
 
     # Padding size
-    PADDING_SIZE = 10
+    PADDING_SIZE = 15
 
-    def __init__(self, vocab_size, embedding_weights):
+    def __init__(self, vocab_size, embedding_weights, batch_size):
         super(DenseCapConfig, self).__init__()
         # Vocabulary size
         self.VOCABULARY_SIZE = vocab_size
         self.EMBEDDING_WEIGHTS = embedding_weights
         self.EMBEDDING_SIZE = embedding_weights.shape[1]
+        self.BATCH_SIZE = batch_size
 
 
 class VisualGenomeDataset(Dataset):
@@ -53,6 +54,7 @@ class VisualGenomeDataset(Dataset):
         super(VisualGenomeDataset, self).__init__()
         self.word_to_id = words_to_ids
         self.padding_size = padding_size
+        self.rois = None
 
     def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
         with open(data_file, 'r', encoding='utf-8') as doc:
@@ -102,7 +104,9 @@ class VisualGenomeDataset(Dataset):
         rois = []
         caps = []
         for roi, caption in zip(image_info['rois'], image_info['captions']):
-            cap = self.encode_region_caption(caption[0])
+            caption_modified = '<start>' + caption[0] + '<end>' if len(caption[0]) < self.padding_size - 2 \
+                else '<start>' + caption[0][:8] + '<end>'
+            cap = self.encode_region_caption(caption_modified)
             if cap.size != 0:
                 rois.append(roi)
                 caps.append(cap)
@@ -122,16 +126,10 @@ class VisualGenomeDataset(Dataset):
         return encode_caption(caption, self.word_to_id)
 
 
-def build_roi_caption_model(mode, features_input, lstm_units, config, batch_size):
-    if mode == 'training':
-        inputs = KL.Input(batch_shape=[batch_size] + features_input, name="input_imgcap_caption_features")
-        feature = KL.Lambda(lambda x: x[:, :, :-config.PADDING_SIZE], name="imgcap_caption_feature")(inputs)
-        gt_captions = KL.Lambda(lambda x: x[:, :, -config.PADDING_SIZE:], name="imgcap_caption_gt_captions")(inputs)
-    else:
-        inputs = KL.Input(batch_shape=[batch_size] + features_input, name="input_imgcap_caption_features")
-        feature = KL.Lambda(lambda x: x, name="imgcap_caption_feature")(inputs)
-    last_word = KL.Lambda(lambda x: tf.zeros([batch_size, x.shape[1]], tf.float32),
-                          output_shape=[feature.shape.as_list()[1]], name='imgcap_last_word')(feature)
+def word_generation_model(features_input, lstm_units, config):
+    inputs = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name='word_model_input')
+    roi_features = KL.Lambda(lambda x: x[:, :-config.PADDING_SIZE])(inputs)
+    previous_words = KL.Lambda(lambda x: x[:, -config.PADDING_SIZE:])(inputs)
 
     embedding = KL.Embedding(input_dim=config.VOCABULARY_SIZE,
                              output_dim=config.EMBEDDING_SIZE,
@@ -139,101 +137,88 @@ def build_roi_caption_model(mode, features_input, lstm_units, config, batch_size
                              trainable=False,
                              mask_zero=True,
                              name='imgcap_embedding_layer')
-    lstm = KL.LSTM(units=lstm_units, recurrent_dropout=0.2,
-                   return_state=False, stateful=False, name='imgcap_lstm')
+    lstm1 = KL.LSTM(units=lstm_units, recurrent_dropout=0.2, return_sequences=True, name='imgcap_lstm1')
+    lstm2 = KL.LSTM(units=lstm_units, recurrent_dropout=0.2, name='imgcap_lstm2')
     dense1 = KL.Dense(1024, activation='relu', name='imgcap_lstm_d1')
     dense2 = KL.Dense(config.VOCABULARY_SIZE, activation='softmax', name='imgcap_lstm_d2')
-
     concat = KL.Concatenate(axis=-1, name='img_cap_concat')
 
-    img_cap_caption = []
-    for j in range(config.PADDING_SIZE):
-        if j == 0:
-            embedd = KL.Lambda(lambda x: tf.zeros([batch_size, 1, config.EMBEDDING_SIZE],
-                                                  tf.float32))(last_word)
-        else:
-            embedd = embedding(last_word)
-        concatenated_input = concat([feature, embedd])
-        rnn = lstm(concatenated_input)
-        feature_new = KL.Lambda(lambda x: tf.squeeze(x, axis=[1]))(feature)
-        concatenated_output = concat([feature_new, rnn])
-        out1 = dense1(concatenated_output)
-        current_word_prob = dense2(out1)
-        img_cap_caption.append(current_word_prob)
-        if mode == 'training':
-            last_word = KL.Lambda(lambda x: x[:, :, j])(gt_captions)
-        else:
-            last_word = KL.Lambda(lambda x: tf.cast(tf.expand_dims(tf.argmax(x, axis=-1), axis=1),
-                                                    tf.float32))(current_word_prob)
+    embed_words = embedding(previous_words)
+    repeated_roi_features = KL.RepeatVector(config.PADDING_SIZE)(roi_features)
+    concat_context = concat([embed_words, repeated_roi_features])
+    lstm_result = lstm1(concat_context)
+    lstm_result = lstm2(lstm_result)
+    concat_output = concat([lstm_result, roi_features])
+    result_dense = dense1(concat_output)
+    result_dense = dense2(result_dense)
 
-    img_cap_caption = KL.Lambda(lambda x: tf.stack(x, axis=1))(img_cap_caption)
-
-    return KM.Model(inputs, img_cap_caption, name="imgcap_caption_model")
+    return KM.Model(inputs, result_dense, name="imgcap_word_model")
 
 
-def build_roi_caption_model_second_type(mode, features_input, lstm_units, config, batch_size):
-    if mode == 'training':
-        inputs = KL.Input(batch_shape=[batch_size] + features_input, name="input_imgcap_caption_features")
-        feature = KL.Lambda(lambda x: x[:, :, :-config.PADDING_SIZE], name="imgcap_caption_feature")(inputs)
-        gt_captions = KL.Lambda(lambda x: x[:, :, -config.PADDING_SIZE:], name="imgcap_caption_gt_captions")(inputs)
-    else:
-        inputs = KL.Input(batch_shape=[batch_size] + features_input, name="input_imgcap_caption_features")
-        feature = KL.Lambda(lambda x: x, name="imgcap_caption_feature")(inputs)
-    current_caption = KL.Lambda(lambda x: tf.zeros([batch_size, config.PADDING_SIZE], tf.float32),
-                                output_shape=[config.PADDING_SIZE],
-                                name='imgcap_last_word')(feature)
+def build_roi_caption_model_training(features_input, lstm_units, config):
+    inputs = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name="input_imgcap_caption_features")
+    feature = KL.Lambda(lambda x: x[:, :, :-config.PADDING_SIZE], name="imgcap_caption_feature")(inputs)
+    gt_captions = KL.Lambda(lambda x: x[:, :, -config.PADDING_SIZE:], name="imgcap_caption_gt_captions")(inputs)
 
-    embedding = KL.Embedding(input_dim=config.VOCABULARY_SIZE,
-                             output_dim=config.EMBEDDING_SIZE,
-                             weights=[config.EMBEDDING_WEIGHTS],
-                             trainable=False,
-                             mask_zero=True,
-                             name='imgcap_embedding_layer')
-    prev_lstm = KL.LSTM(units=lstm_units, name='imgcap_lstm1')
-    lstm = KL.LSTM(units=lstm_units, recurrent_dropout=0.2,
-                   return_state=False, stateful=False, name='imgcap_lstm2')
-    dense1 = KL.Dense(1024, activation='relu', name='imgcap_lstm_d1')
-    dense2 = KL.Dense(config.VOCABULARY_SIZE, activation='softmax', name='imgcap_lstm_d2')
+    feature = KL.Lambda(lambda x: tf.squeeze(x, axis=1))(feature)
+    gt_captions = KL.Lambda(lambda x: tf.squeeze(x, axis=1))(gt_captions)
 
-    concat = KL.Concatenate(axis=-1, name='img_cap_concat')
+    word_model = word_generation_model(features_input[1:], lstm_units, config)
+    repeated_features = KL.RepeatVector(config.PADDING_SIZE)(feature)
+    previous_words = KL.Lambda(lambda x: tf.concat([tf.expand_dims(tf.concat([x[:, :j],
+                                                                              tf.zeros([config.BATCH_SIZE,
+                                                                                        config.PADDING_SIZE - j])],
+                                                                             axis=-1), axis=1)
+                                                    for j in range(1, config.PADDING_SIZE + 1)],
+                                                   axis=1))(gt_captions)
+    concatenated_input = KL.Concatenate(axis=-1)([repeated_features, previous_words])
+    outputs = KL.TimeDistributed(word_model)(concatenated_input)
 
-    img_cap_caption = []
-    for j in range(config.PADDING_SIZE):
-        if j == 0:
-            embedd = KL.Lambda(lambda x: tf.zeros([batch_size, config.PADDING_SIZE, config.EMBEDDING_SIZE],
-                                                  tf.float32))(current_caption)
-        else:
-            embedd = embedding(current_caption)
-        rnn_words = prev_lstm(embedd)
-        rnn_words = KL.Lambda(lambda x: tf.expand_dims(x, axis=1))(rnn_words)
-        concatenated_input = concat([feature, rnn_words])
-        rnn = lstm(concatenated_input)
-        feature_new = KL.Lambda(lambda x: tf.squeeze(x, axis=[1]))(feature)
-        concatenated_output = concat([feature_new, rnn])
-        out1 = dense1(concatenated_output)
-        current_word_prob = dense2(out1)
-        img_cap_caption.append(current_word_prob)
-        if mode == 'training':
-            current_caption = KL.Lambda(lambda x: tf.pad(tf.squeeze(x[:, :, :(j+1)], axis=1),
-                                                         tf.constant([[0, 0],
-                                                                      [0, config.PADDING_SIZE - j - 1]])))(gt_captions)
-        else:
-            if len(img_cap_caption) > 1:
-                current_caption = KL.Lambda(lambda x: tf.pad(tf.argmax(tf.stack(x, axis=1), axis=-1),
-                                                             tf.constant([[0, 0],
-                                                                          [0, config.PADDING_SIZE - j - 1]])
-                                                             ))(img_cap_caption)
-            else:
-                current_caption = KL.Lambda(lambda x: tf.pad(tf.expand_dims(tf.argmax(x, axis=-1), axis=-1),
-                                                             tf.constant([[0, 0],
-                                                                          [0, config.PADDING_SIZE - j - 1]])
-                                                             ))(img_cap_caption[0])
-
-    img_cap_caption = KL.Lambda(lambda x: tf.stack(x, axis=1))(img_cap_caption)
-    return KM.Model(inputs, img_cap_caption, name="imgcap_caption_model")
+    return KM.Model(inputs, outputs, name="imgcap_caption_model")
 
 
-def build_lstm_model(features_input, config, units, batch_size):
+class ROICaptionInferenceLayer(KL.Layer):
+    def __init__(self, word_model, config):
+        super(ROICaptionInferenceLayer, self).__init__()
+        self.word_model = word_model
+        self.config = config
+
+    def build(self, input_shape):
+        model_input_shape = (input_shape[0], input_shape[1] + config.PADDING_SIZE)
+        self.word_model.build(model_input_shape)
+        self._trainable_weights = self.word_model.trainable_weights
+        self._non_trainable_weights = self.word_model.non_trainable_weights
+        self.built = True
+
+    def call(self, inputs, **kwargs):
+        feature = inputs
+        concat = KL.Concatenate(axis=-1)
+        generated_caption = []
+        prev_words = KL.Lambda(lambda x: tf.ones([config.BATCH_SIZE, 1]))(feature)
+
+        for j in range(config.PADDING_SIZE):
+            prev_context = KL.Lambda(lambda x: tf.concat([x,
+                                                          tf.zeros([config.BATCH_SIZE,
+                                                                    config.PADDING_SIZE - j - 1])],
+                                                         axis=-1))(prev_words)
+
+            concatenated_input = concat([feature, prev_context])
+            current_word = self.word_model(concatenated_input)
+            generated_caption.append(current_word)
+            prev_words = KL.Lambda(lambda x: tf.concat([prev_words,
+                                                        tf.cast(
+                                                            tf.expand_dims(tf.argmax(current_word, axis=-1), axis=-1),
+                                                            dtype=tf.float32)], axis=-1))(current_word)
+
+        outputs = KL.Lambda(lambda x: tf.stack(x, axis=1))(generated_caption)
+
+        return outputs
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0], self.config.PADDING_SIZE, self.config.VOCABULARY_SIZE
+
+
+def build_lstm_model(features_input, config, units, mode):
     """Builds a Keras model of the LSTM Caption Generation Network.
     It wraps the lstm generator graph so it can be used multiple times with shared
     weights.
@@ -245,59 +230,69 @@ def build_lstm_model(features_input, config, units, batch_size):
     Returns a Keras Model object. The model output, when called, is:
     generated_words: [batch, NUMBER OF ROIS, PADDING_SIZE, VOCABULARY_SIZE] Words of captions for each ROI.
     """
-    features = KL.Input(batch_shape=[batch_size] + features_input, name="input_imgcap_lstm_features")
-    gt_captions = KL.Input(shape=[config.PADDING_SIZE],
-                           batch_shape=[batch_size, config.PADDING_SIZE],
-                           name="input_imgcap_lstm_gt_captions")
+    assert mode in ['training', 'inference']
 
+    features = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name="input_imgcap_lstm_features")
     features_new = KL.Lambda(lambda x: tf.expand_dims(x, axis=1))(features)
-    gt_captions_new = KL.Lambda(lambda x: tf.expand_dims(x, axis=1))(gt_captions)
-
     x = KL.TimeDistributed(KL.Conv2D(1024, (config.POOL_SIZE, config.POOL_SIZE), padding="valid"),
                            name="mrcnn_class_conv1")(features_new)
     x = KL.TimeDistributed(BatchNorm(axis=3), name='mrcnn_class_bn1')(x)
     x = KL.Activation('relu')(x)
-    x = KL.TimeDistributed(KL.Conv2D(10, (1, 1)),
-                           name="mrcnn_class_conv2_")(x)
-    x = KL.TimeDistributed(BatchNorm(axis=3),
-                           name='mrcnn_class_bn2_')(x)
-    x = KL.Activation('relu')(x)
+
+    # x = KL.TimeDistributed(KL.Conv2D(10, (1, 1)),
+    #                        name="mrcnn_class_conv2_")(x)
+    # x = KL.TimeDistributed(BatchNorm(axis=3),
+    #                        name='mrcnn_class_bn2_')(x)
+    # x = KL.Activation('relu')(x)
 
     features_new = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
                              name="pool_squeeze")(x)
 
-    merged_input = KL.Concatenate(axis=-1)([features_new, gt_captions_new])
-    merged_input = KL.Lambda(lambda x: tf.expand_dims(x, axis=2))(merged_input)
-    caption_model = build_roi_caption_model('training', merged_input.shape.as_list()[2:],
-                                                        units, config, batch_size)
-    outputs = KL.TimeDistributed(caption_model)(merged_input)
-    outputs = KL.Lambda(lambda x: tf.squeeze(x, axis=1))(outputs)
-    return KM.Model([features, gt_captions], outputs, name="imgcap_lstm_model")
+    if mode == 'training':
+        gt_captions = KL.Input(shape=[config.PADDING_SIZE],
+                               batch_shape=[config.BATCH_SIZE, config.PADDING_SIZE],
+                               name="input_imgcap_lstm_gt_captions")
+        gt_captions_new = KL.Lambda(lambda x: tf.expand_dims(x, axis=1))(gt_captions)
+
+        merged_input = KL.Concatenate(axis=-1)([features_new, gt_captions_new])
+        merged_input = KL.Lambda(lambda x: tf.expand_dims(x, axis=2))(merged_input)
+
+        caption_model = build_roi_caption_model_training(merged_input.shape.as_list()[2:],
+                                                         units, config)
+        outputs = KL.TimeDistributed(caption_model, name='imgcap_caption_td')(merged_input)
+        outputs = KL.Lambda(lambda x: tf.squeeze(x, axis=1))(outputs)
+        return KM.Model([features, gt_captions], outputs, name="imgcap_lstm_model")
+    else:
+        word_model = word_generation_model([features_new.shape.as_list()[2] + config.PADDING_SIZE], units, config)
+        caption_layer = ROICaptionInferenceLayer(word_model, config)
+        outputs = KL.TimeDistributed(caption_layer, name='imgcap_caption_td')(features_new)
+        outputs = KL.Lambda(lambda x: tf.squeeze(x, axis=1))(outputs)
+        return KM.Model(features, outputs, name="imgcap_lstm_model")
 
 
-def build_train_data(dataset, model):
-    if os.path.exists('train_x.pkl'):
-        with open('train_x.pkl', 'rb') as f:
-            train_x = pickle.load(f)
-        with open('train_y.pkl', 'rb') as f:
-            train_y = pickle.load(f)
+def build_test_data(dataset, model):
+    if os.path.exists('test_x.pkl'):
+        with open('test_x.pkl', 'rb') as f:
+            test_x = pickle.load(f)
+        with open('test_y.pkl', 'rb') as f:
+            test_y = pickle.load(f)
     else:
         print('Building dataset ...')
-        train_x = []
-        train_y = []
+        test_x = []
+        test_y = []
         for image_id in dataset._image_ids:
             features = generate_features(dataset, image_id, model)
             _, captions = dataset.load_captions_and_rois(image_id)
             steps = features.shape[0]
             for i in range(steps):
-                train_x.append(features[i])
-                train_y.append(captions[i])
-        with open('train_x.pkl', 'wb') as f:
-            pickle.dump(train_x, f, pickle.HIGHEST_PROTOCOL)
-        with open('train_y.pkl', 'wb') as f:
-            pickle.dump(train_y, f, pickle.HIGHEST_PROTOCOL)
+                test_x.append(features[i])
+                test_y.append(captions[i])
+        with open('test_x.pkl', 'wb') as f:
+            pickle.dump(test_x, f, pickle.HIGHEST_PROTOCOL)
+        with open('test_y.pkl', 'wb') as f:
+            pickle.dump(test_y, f, pickle.HIGHEST_PROTOCOL)
 
-    return np.array(train_x), np.array(train_y)
+    return np.array(test_x), np.array(test_y)
 
 
 def create_roi_info(dataset):
@@ -339,7 +334,7 @@ def data_generator(dataset, features_model, config, batch_size, shuffle=False):
             output_words = np.array(output_words)
             if b == 0:
                 batch_image_features = np.zeros((batch_size,) + roi_features.shape, dtype=roi_features.dtype)
-                batch_input_words = np.zeros((batch_size,) +  input_words.shape, dtype=input_words.dtype)
+                batch_input_words = np.zeros((batch_size,) + input_words.shape, dtype=input_words.dtype)
                 batch_output_words = np.zeros((batch_size,) + output_words.shape, dtype=output_words.dtype)
             batch_image_features[b] = roi_features
             batch_input_words[b] = input_words
@@ -353,7 +348,7 @@ def data_generator(dataset, features_model, config, batch_size, shuffle=False):
 
 
 if __name__ == '__main__':
-    train = False
+    train = True
     embeddings_file_path = '../dataset/glove.6B.300d.txt'
 
     data_directory = '../dataset/visual genome/'
@@ -394,23 +389,19 @@ if __name__ == '__main__':
         with open(embedding_matrix_file, 'rb') as f:
             embedding_matrix = pickle.load(f)
 
-    config = DenseCapConfig(len(id_to_word), embedding_matrix)
-    config.display()
-
     features_model = load_model()
 
     model_filepath = 'models/model-{epoch:02d}-{val_loss:.2f}.h5'
     logs_filepath = 'logs/text_generation.log'
-    if train:
-        model = build_lstm_model([7, 7, 256], config, 512, 512)
-    else:
-        model = build_lstm_model([7, 7, 256], config, 512, 1)
-    opt = keras.optimizers.Adam(amsgrad=True)
-    model.compile(optimizer=opt,
-                  loss=keras.losses.categorical_crossentropy)
-    model._make_train_function()
 
     if train:
+        config = DenseCapConfig(len(id_to_word), embedding_matrix, 512)
+        config.display()
+        model = build_lstm_model([7, 7, 256], config, 512, 'training')
+        opt = keras.optimizers.Adam(amsgrad=True)
+        model.compile(optimizer=opt,
+                      loss=keras.losses.categorical_crossentropy)
+
         # Training dataset
         dataset_train = VisualGenomeDataset(word_to_id, config.PADDING_SIZE)
         dataset_train.load_visual_genome(data_directory, train_val_image_ids[:90000], image_meta_file_path,
@@ -436,10 +427,6 @@ if __name__ == '__main__':
             with open(val_rois_file, 'rb') as f:
                 val_rois = pickle.load(f)
 
-        # train_X, train_y = build_train_data(dataset_train, features_model)
-        # train_x = train_y.copy()
-        # train_y = keras.utils.to_categorical(train_y, num_classes=config.VOCABULARY_SIZE)
-
         dataset_train.add_rois(train_rois)
         dataset_val.add_rois(val_rois)
 
@@ -455,23 +442,23 @@ if __name__ == '__main__':
         print('Validate on ' + str(len(val_rois)) + ' samples')
         model.load_weights('./mask_rcnn_coco.h5', by_name=True)
 
-        print(config.BATCH_SIZE)
-        model.fit_generator(train_data_generator, epochs=200, steps_per_epoch=500,
+        model.fit_generator(train_data_generator, epochs=3, steps_per_epoch=500,
                             callbacks=[checkpoint, csv_logger], validation_data=next(val_data_generator), verbose=1)
-
-        # model.fit([train_X, train_x], train_y, epochs=200, batch_size=config.BATCH_SIZE, shuffle=True,
-        #          callbacks=[checkpoint, csv_logger], validation_split=0.2)
+        model.save_weights('models/model-25-2.47.h5')
     else:
+        config = DenseCapConfig(len(id_to_word), embedding_matrix, 2)
+        config.display()
+
+        model = build_lstm_model([7, 7, 256], config, 512, 'inference')
+
         # Test dataset
         dataset_test = VisualGenomeDataset(word_to_id, config.PADDING_SIZE)
         dataset_test.load_visual_genome(data_directory, test_image_ids[:2], image_meta_file_path,
                                         data_file_path)
         dataset_test.prepare()
         model.load_weights('models/model-25-2.47.h5')
-        train_X, train_y = build_train_data(dataset_test, features_model)
-        train_x = train_y.copy()
-        train_y = keras.utils.to_categorical(train_y, num_classes=config.VOCABULARY_SIZE)
-        result = model.predict([train_X, train_x], batch_size=config.BATCH_SIZE, verbose=1)
+        test_X, test_y = build_test_data(dataset_test, features_model)
+        test_y = keras.utils.to_categorical(test_y, num_classes=config.VOCABULARY_SIZE)
+        result = model.predict(test_X, batch_size=config.BATCH_SIZE, verbose=1)
         for sent in result:
-        # for sent in train_y:
             print(decode_caption(sent, id_to_word))
