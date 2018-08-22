@@ -21,7 +21,8 @@ class InferenceConfig(DenseCapConfig):
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
-    DETECTION_NMS_THRESHOLD = 0.7
+    DETECTION_NMS_THRESHOLD = 0.5
+    DETECTION_MAX_INSTANCES = 50
 
     # Padding size
     PADDING_SIZE = 10

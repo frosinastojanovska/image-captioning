@@ -1578,7 +1578,7 @@ class DenseImageCapRCNN:
         exclude: list of layer names to exclude
         """
         import h5py
-        from keras.engine import saving as topology
+        from keras.engine import topology
 
         if exclude:
             by_name = True

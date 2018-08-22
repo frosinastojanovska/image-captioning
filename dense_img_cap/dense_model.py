@@ -620,7 +620,7 @@ def refine_generations(rois, captions, window, config):
 
     # Keep top generations
     roi_count = config.DETECTION_MAX_INSTANCES
-    top_ids = np.argsort(captions_scores[keep])[::-1][:roi_count]
+    top_ids = keep[:roi_count]
     keep = keep[top_ids]
 
     # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
