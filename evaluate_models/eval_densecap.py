@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import skimage.io as skiimage_io
 import skimage.color as skimage_color
+from tqdm import tqdm
 
 from utils import Dataset, compute_overlaps
 from preprocess import decode_caption, encode_caption_v2
@@ -326,7 +327,7 @@ class DenseCaptioningEvaluator:
             scorer = Bleu(4)
         tokenizer = PTBTokenizer()
         scores = []
-        for r in records:
+        for _, r in zip(tqdm(list(range(len(records)))), records):
             r1 = [x for x in r if len(x['references']) > 0]
             gens = {}
             refs = {}
@@ -363,25 +364,25 @@ class DenseCaptioningEvaluator:
             print('Evaluating with SPICE...')
             scores = self.score_captions(records, 'SPICE')
             scores = [item for sublist in scores for item in sublist]
-            with open(f'../dataset/densecap_scores_spice.pkl', 'wb') as f:
+            with open('../dataset/densecap_scores_spice.pkl', 'wb') as f:
                 pickle.dump(scores, f)
         if not os.path.exists('../dataset/densecap_scores_rouge.pkl'):
             print('Evaluating with ROUGE...')
             scores = self.score_captions(records, 'ROUGE')
             scores = [item for sublist in scores for item in sublist]
-            with open(f'../dataset/densecap_scores_rouge.pkl', 'wb') as f:
+            with open('../dataset/densecap_scores_rouge.pkl', 'wb') as f:
                 pickle.dump(scores, f)
         if not os.path.exists('../dataset/densecap_scores_meteor.pkl'):
             print('Evaluating with METEOR...')
             scores = self.score_captions(records, 'METEOR')
             scores = [item for sublist in scores for item in sublist]
-            with open(f'../dataset/densecap_scores_meteor.pkl', 'wb') as f:
+            with open('../dataset/densecap_scores_meteor.pkl', 'wb') as f:
                 pickle.dump(scores, f)
         if not os.path.exists('../dataset/densecap_scores_cider.pkl'):
             print('Evaluating with CIDER...')
             scores = self.score_captions(records, 'CIDER')
             scores = [item for sublist in scores for item in sublist]
-            with open(f'../dataset/densecap_scores_cider.pkl', 'wb') as f:
+            with open('../dataset/densecap_scores_cider.pkl', 'wb') as f:
                 pickle.dump(scores, f)
         if not os.path.exists('../dataset/densecap_scores_bleu_1.pkl'):
             print('Evaluating with BLEU...')
@@ -399,13 +400,13 @@ class DenseCaptioningEvaluator:
             scores_2 = [item for sublist in scores_2 for item in sublist]
             scores_3 = [item for sublist in scores_3 for item in sublist]
             scores_4 = [item for sublist in scores_4 for item in sublist]
-            with open(f'../dataset/densecap_scores_bleu_1.pkl', 'wb') as f:
+            with open('../dataset/densecap_scores_bleu_1.pkl', 'wb') as f:
                 pickle.dump(scores_1, f)
-            with open(f'../dataset/densecap_scores_bleu_2.pkl', 'wb') as f:
+            with open('../dataset/densecap_scores_bleu_2.pkl', 'wb') as f:
                 pickle.dump(scores_2, f)
-            with open(f'../dataset/densecap_scores_bleu_3.pkl', 'wb') as f:
+            with open('../dataset/densecap_scores_bleu_3.pkl', 'wb') as f:
                 pickle.dump(scores_3, f)
-            with open(f'../dataset/densecap_scores_bleu_4.pkl', 'wb') as f:
+            with open('../dataset/densecap_scores_bleu_4.pkl', 'wb') as f:
                 pickle.dump(scores_4, f)
 
     def evaluate(self, method):
@@ -520,7 +521,7 @@ def evaluate_test_captions():
         image_meta_data = json.loads(file.read())
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
-    test_image_ids = image_ids_list[100000:100002]
+    test_image_ids = image_ids_list[100000:]
     # test_image_ids = [62, 65]
     config = InferenceConfig(len(word_to_id), embedding_matrix)
     config.display()

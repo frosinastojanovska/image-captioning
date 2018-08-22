@@ -17,7 +17,7 @@ from modified_dense_model import BatchNorm
 from generate_one_roi_features import generate_features, load_model
 from preprocess import encode_caption, load_corpus, load_embeddings, tokenize_corpus, decode_caption
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 class DenseCapConfig(Config):
@@ -38,7 +38,7 @@ class DenseCapConfig(Config):
     VALIDATION_STEPS = 50
 
     # Padding size
-    PADDING_SIZE = 15
+    PADDING_SIZE = 10
 
     def __init__(self, vocab_size, embedding_weights, batch_size):
         super(DenseCapConfig, self).__init__()
@@ -394,12 +394,13 @@ if __name__ == '__main__':
     logs_filepath = 'logs/text_generation.log'
 
     if train:
-        config = DenseCapConfig(len(id_to_word), embedding_matrix, 512)
+        config = DenseCapConfig(len(id_to_word), embedding_matrix, 256)
         config.display()
         model = build_lstm_model([7, 7, 256], config, 512, 'training')
         opt = keras.optimizers.Adam(amsgrad=True)
         model.compile(optimizer=opt,
                       loss=keras.losses.categorical_crossentropy)
+        model._make_train_function()
 
         # Training dataset
         dataset_train = VisualGenomeDataset(word_to_id, config.PADDING_SIZE)
@@ -429,8 +430,8 @@ if __name__ == '__main__':
         dataset_train.add_rois(train_rois)
         dataset_val.add_rois(val_rois)
 
-        train_data_generator = data_generator(dataset_train, features_model, config, 512)
-        val_data_generator = data_generator(dataset_val, features_model, config, 512)
+        train_data_generator = data_generator(dataset_train, features_model, config, 256)
+        val_data_generator = data_generator(dataset_val, features_model, config, 256)
 
         checkpoint = keras.callbacks.ModelCheckpoint(model_filepath, verbose=1, save_weights_only=True, mode='min')
         csv_logger = keras.callbacks.CSVLogger(logs_filepath)
@@ -441,7 +442,7 @@ if __name__ == '__main__':
         print('Validate on ' + str(len(val_rois)) + ' samples')
         model.load_weights('./mask_rcnn_coco.h5', by_name=True)
 
-        model.fit_generator(train_data_generator, epochs=3, steps_per_epoch=500,
+        model.fit_generator(train_data_generator, epochs=50, steps_per_epoch=500,
                             callbacks=[checkpoint, csv_logger], validation_data=next(val_data_generator), verbose=1)
         model.save_weights('models/model-25-2.47.h5')
     else:
