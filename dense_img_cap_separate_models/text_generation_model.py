@@ -184,7 +184,7 @@ class ROICaptionInferenceLayer(KL.Layer):
         self.config = config
 
     def build(self, input_shape):
-        model_input_shape = (input_shape[0], input_shape[1] + config.PADDING_SIZE)
+        model_input_shape = (input_shape[0], input_shape[1] + self.config.PADDING_SIZE)
         self.word_model.build(model_input_shape)
         self._trainable_weights = self.word_model.trainable_weights
         self._non_trainable_weights = self.word_model.non_trainable_weights
@@ -194,12 +194,12 @@ class ROICaptionInferenceLayer(KL.Layer):
         feature = inputs
         concat = KL.Concatenate(axis=-1)
         generated_caption = []
-        prev_words = KL.Lambda(lambda x: tf.ones([config.BATCH_SIZE, 1]))(feature)
+        prev_words = KL.Lambda(lambda x: tf.ones([self.config.BATCH_SIZE, 1]))(feature)
 
-        for j in range(config.PADDING_SIZE):
+        for j in range(self.config.PADDING_SIZE):
             prev_context = KL.Lambda(lambda x: tf.concat([x,
-                                                          tf.zeros([config.BATCH_SIZE,
-                                                                    config.PADDING_SIZE - j - 1])],
+                                                          tf.zeros([self.config.BATCH_SIZE,
+                                                                    self.config.PADDING_SIZE - j - 1])],
                                                          axis=-1))(prev_words)
 
             concatenated_input = concat([feature, prev_context])
@@ -238,12 +238,11 @@ def build_lstm_model(features_input, config, units, mode):
                            name="mrcnn_class_conv1")(features_new)
     x = KL.TimeDistributed(BatchNorm(axis=3), name='mrcnn_class_bn1')(x)
     x = KL.Activation('relu')(x)
-
-    # x = KL.TimeDistributed(KL.Conv2D(10, (1, 1)),
-    #                        name="mrcnn_class_conv2_")(x)
-    # x = KL.TimeDistributed(BatchNorm(axis=3),
-    #                        name='mrcnn_class_bn2_')(x)
-    # x = KL.Activation('relu')(x)
+    x = KL.TimeDistributed(KL.Conv2D(1024, (1, 1)),
+                           name="mrcnn_class_conv2")(x)
+    x = KL.TimeDistributed(BatchNorm(axis=3),
+                           name='mrcnn_class_bn2')(x)
+    x = KL.Activation('relu')(x)
 
     features_new = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
                              name="pool_squeeze")(x)

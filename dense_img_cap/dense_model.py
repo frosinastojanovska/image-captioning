@@ -755,16 +755,10 @@ def extract_roi_features(rois, img_cap_feature_maps, config):
     return features_new
 
 
-def build_roi_caption_model(mode, features_input, lstm_units, config):
-    if mode == 'training':
-        inputs = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name="input_imgcap_caption_features")
-        feature = KL.Lambda(lambda x: x[:, :, :-config.PADDING_SIZE], name="imgcap_caption_feature")(inputs)
-        gt_captions = KL.Lambda(lambda x: x[:, :, -config.PADDING_SIZE:], name="imgcap_caption_gt_captions")(inputs)
-    else:
-        inputs = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name="input_imgcap_caption_features")
-        feature = KL.Lambda(lambda x: x, name="imgcap_caption_feature")(inputs)
-    last_word = KL.Lambda(lambda x: tf.zeros([config.BATCH_SIZE, x.shape[1]], tf.float32),
-                          output_shape=[feature.shape.as_list()[1]], name='imgcap_last_word')(feature)
+def word_generation_model(features_input, lstm_units, config):
+    inputs = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name='word_model_input')
+    roi_features = KL.Lambda(lambda x: x[:, :-config.PADDING_SIZE])(inputs)
+    previous_words = KL.Lambda(lambda x: x[:, -config.PADDING_SIZE:])(inputs)
 
     embedding = KL.Embedding(input_dim=config.VOCABULARY_SIZE,
                              output_dim=config.EMBEDDING_SIZE,
@@ -772,32 +766,85 @@ def build_roi_caption_model(mode, features_input, lstm_units, config):
                              trainable=False,
                              mask_zero=True,
                              name='imgcap_embedding_layer')
-    lstm = KL.LSTM(units=lstm_units, recurrent_dropout=0.2,
-                   return_state=False, stateful=False, name='imgcap_lstm')
+    lstm1 = KL.LSTM(units=lstm_units, recurrent_dropout=0.2, return_sequences=True, name='imgcap_lstm1')
+    lstm2 = KL.LSTM(units=lstm_units, recurrent_dropout=0.2, name='imgcap_lstm2')
     dense1 = KL.Dense(1024, activation='relu', name='imgcap_lstm_d1')
     dense2 = KL.Dense(config.VOCABULARY_SIZE, activation='softmax', name='imgcap_lstm_d2')
-
     concat = KL.Concatenate(axis=-1, name='img_cap_concat')
 
-    img_cap_caption = []
-    for j in range(config.PADDING_SIZE):
-        embedd = embedding(last_word)
-        concatenated_input = concat([feature, embedd])
-        rnn = lstm(concatenated_input)
-        feature_new = KL.Lambda(lambda x: tf.squeeze(x, axis=[1]))(feature)
-        concatenated_output = concat([feature_new, rnn])
-        out1 = dense1(concatenated_output)
-        current_word_prob = dense2(out1)
-        img_cap_caption.append(current_word_prob)
-        if mode == 'training':
-            last_word = KL.Lambda(lambda x: x[:, :, j])(gt_captions)
-        else:
-            last_word = KL.Lambda(lambda x: tf.cast(tf.expand_dims(tf.argmax(x, axis=-1), axis=-1),
-                                                    tf.float32))(current_word_prob)
+    embed_words = embedding(previous_words)
+    repeated_roi_features = KL.RepeatVector(config.PADDING_SIZE)(roi_features)
+    concat_context = concat([embed_words, repeated_roi_features])
+    lstm_result = lstm1(concat_context)
+    lstm_result = lstm2(lstm_result)
+    concat_output = concat([lstm_result, roi_features])
+    result_dense = dense1(concat_output)
+    result_dense = dense2(result_dense)
 
-    img_cap_caption = KL.Lambda(lambda x: tf.stack(x, axis=1))(img_cap_caption)
+    return KM.Model(inputs, result_dense, name="imgcap_word_model")
 
-    return KM.Model(inputs, img_cap_caption, name="imgcap_caption_model")
+
+def build_roi_caption_model_training(features_input, lstm_units, config):
+    inputs = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name="input_imgcap_caption_features")
+    feature = KL.Lambda(lambda x: x[:, :, :-config.PADDING_SIZE], name="imgcap_caption_feature")(inputs)
+    gt_captions = KL.Lambda(lambda x: x[:, :, -config.PADDING_SIZE:], name="imgcap_caption_gt_captions")(inputs)
+
+    feature = KL.Lambda(lambda x: tf.squeeze(x, axis=1))(feature)
+    gt_captions = KL.Lambda(lambda x: tf.squeeze(x, axis=1))(gt_captions)
+
+    word_model = word_generation_model(features_input[1:], lstm_units, config)
+    repeated_features = KL.RepeatVector(config.PADDING_SIZE)(feature)
+    previous_words = KL.Lambda(lambda x: tf.concat([tf.expand_dims(tf.concat([x[:, :j],
+                                                                              tf.zeros([config.BATCH_SIZE,
+                                                                                        config.PADDING_SIZE - j])],
+                                                                             axis=-1), axis=1)
+                                                    for j in range(1, config.PADDING_SIZE + 1)],
+                                                   axis=1))(gt_captions)
+    concatenated_input = KL.Concatenate(axis=-1)([repeated_features, previous_words])
+    outputs = KL.TimeDistributed(word_model)(concatenated_input)
+
+    return KM.Model(inputs, outputs, name="imgcap_caption_model")
+
+
+class ROICaptionInferenceLayer(KL.Layer):
+    def __init__(self, word_model, config):
+        super(ROICaptionInferenceLayer, self).__init__()
+        self.word_model = word_model
+        self.config = config
+
+    def build(self, input_shape):
+        model_input_shape = (input_shape[0], input_shape[1] + self.config.PADDING_SIZE)
+        self.word_model.build(model_input_shape)
+        self._trainable_weights = self.word_model.trainable_weights
+        self._non_trainable_weights = self.word_model.non_trainable_weights
+        self.built = True
+
+    def call(self, inputs, **kwargs):
+        feature = inputs
+        concat = KL.Concatenate(axis=-1)
+        generated_caption = []
+        prev_words = KL.Lambda(lambda x: tf.ones([self.config.BATCH_SIZE, 1]))(feature)
+
+        for j in range(self.config.PADDING_SIZE):
+            prev_context = KL.Lambda(lambda x: tf.concat([x,
+                                                          tf.zeros([self.config.BATCH_SIZE,
+                                                                    self.config.PADDING_SIZE - j - 1])],
+                                                         axis=-1))(prev_words)
+
+            concatenated_input = concat([feature, prev_context])
+            current_word = self.word_model(concatenated_input)
+            generated_caption.append(current_word)
+            prev_words = KL.Lambda(lambda x: tf.concat([prev_words,
+                                                        tf.cast(
+                                                            tf.expand_dims(tf.argmax(current_word, axis=-1), axis=-1),
+                                                            dtype=tf.float32)], axis=-1))(current_word)
+
+        outputs = KL.Lambda(lambda x: tf.stack(x, axis=1))(generated_caption)
+
+        return outputs
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0], self.config.PADDING_SIZE, self.config.VOCABULARY_SIZE
 
 
 ############################################################
@@ -1497,10 +1544,9 @@ class DenseImageCapRCNN:
 
             merged_input = KL.Concatenate(axis=-1)([features, gt_captions_new])
             merged_input = KL.Lambda(lambda x: tf.expand_dims(x, axis=2))(merged_input)
-            caption_model = build_roi_caption_model(mode, [1, features.shape.as_list()[-1] +
-                                                           config.PADDING_SIZE],
-                                                    lstm_units, config)
-            img_cap_caption = KL.TimeDistributed(caption_model)(merged_input)
+            caption_model = build_roi_caption_model_training(merged_input.shape.as_list()[2:],
+                                                             lstm_units, config)
+            img_cap_caption = KL.TimeDistributed(caption_model, name='imgcap_caption_td')(merged_input)
 
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
@@ -1531,10 +1577,11 @@ class DenseImageCapRCNN:
 
             features = extract_roi_features(rpn_rois, img_cap_feature_maps, config)
             features = KL.Lambda(lambda x: tf.reshape(x, shape=[config.BATCH_SIZE] + x.shape.as_list()[1:]))(features)
-            features = KL.Lambda(lambda x: tf.expand_dims(x, axis=2))(features)
-            caption_model = build_roi_caption_model(mode, features.shape.as_list()[2:],
-                                                    lstm_units, config)
-            predicted_captions = KL.TimeDistributed(caption_model)(features)
+
+            word_model = word_generation_model([features.shape.as_list()[2] + config.PADDING_SIZE],
+                                               lstm_units, config)
+            caption_layer = ROICaptionInferenceLayer(word_model, config)
+            predicted_captions = KL.TimeDistributed(caption_layer, name='imgcap_caption_td')(features)
 
             # Generations
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
