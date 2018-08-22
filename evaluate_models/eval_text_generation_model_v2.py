@@ -22,7 +22,7 @@ from eval.cider.cider import Cider
 from eval.bleu.bleu import Bleu
 from eval.tokenizer.ptbtokenizer import PTBTokenizer
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 
 
@@ -275,10 +275,8 @@ if __name__ == '__main__':
 
     if inject:
         model_filepath = 'models/model1-{epoch:02d}-{val_loss:.2f}.h5'
-        logs_filepath = 'logs/text_generation_m1.log'
     else:
         model_filepath = 'models/model2-{epoch:02d}-{val_loss:.2f}.h5'
-        logs_filepath = 'logs/text_generation_m2.log'
 
     model = build_model((7, 7, 256), (10,), config, 256, inject)
     model.load_weights('mask_rcnn_coco.h5', by_name=True)

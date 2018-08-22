@@ -16,7 +16,7 @@ def load_scores(model_name):
     with open('../dataset/' + model_name + '_meteor_scores.pickle', 'rb') as f:
         scores['METEOR'] = pickle.load(f)
     with open('../dataset/' + model_name + '_rouge_scores.pickle', 'rb') as f:
-        scores['ROUGE'] = pickle.load(f)
+        scores['ROUGE-L'] = pickle.load(f)
     with open('../dataset/' + model_name + '_cider_scores.pickle', 'rb') as f:
         scores['CIDER'] = pickle.load(f)
     with open('../dataset/' + model_name + '_bleu1_scores.pickle', 'rb') as f:
@@ -98,7 +98,7 @@ if __name__ == '__main__':
     plot_graph_scores_model_based(eval_scores_m3, 'M3')
 
     plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'SPICE')
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'ROUGE')
+    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'ROUGE-L')
     plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'METEOR')
     plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'CIDER')
     plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_1')
