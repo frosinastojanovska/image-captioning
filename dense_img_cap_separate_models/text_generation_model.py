@@ -104,11 +104,12 @@ class VisualGenomeDataset(Dataset):
         rois = []
         caps = []
         for roi, caption in zip(image_info['rois'], image_info['captions']):
-            caption_modified = '<start>' + caption[0] + '<end>' if len(caption[0]) < self.padding_size - 2 \
-                else '<start>' + caption[0][:8] + '<end>'
-            cap = self.encode_region_caption(caption_modified)
+            cap = self.encode_region_caption(caption[0])
             if cap.size != 0:
                 rois.append(roi)
+                # add <start> and <end> tokens
+                cap = np.hstack((np.array(1), cap, np.array(2))) if len(cap) < (self.padding_size - 2) \
+                    else np.hstack((np.array(1), cap[:(self.padding_size - 2)], np.array(2)))
                 caps.append(cap)
         captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
         rois = np.array(rois)
@@ -156,6 +157,17 @@ def word_generation_model(features_input, lstm_units, config):
 
 
 def build_roi_caption_model_training(features_input, lstm_units, config):
+    """ Model for training ROI caption generation
+
+    :param features_input: ROI features shape
+    :type features_input: list(int)
+    :param lstm_units: size of the units of LSTM cells
+    :type lstm_units: int
+    :param config: configuration object
+    :type config: DenseCapConfig object
+    :return: roi caption generation model
+    :rtype: KM.Model object
+    """
     inputs = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name="input_imgcap_caption_features")
     feature = KL.Lambda(lambda x: x[:, :, :-config.PADDING_SIZE], name="imgcap_caption_feature")(inputs)
     gt_captions = KL.Lambda(lambda x: x[:, :, -config.PADDING_SIZE:], name="imgcap_caption_gt_captions")(inputs)
@@ -178,6 +190,8 @@ def build_roi_caption_model_training(features_input, lstm_units, config):
 
 
 class ROICaptionInferenceLayer(KL.Layer):
+    """ Layer for generating ROI caption"""
+
     def __init__(self, word_model, config):
         super(ROICaptionInferenceLayer, self).__init__()
         self.word_model = word_model
@@ -326,7 +340,7 @@ def data_generator(dataset, features_model, config, batch_size, shuffle=False):
             prev_im_id = image_id
             input_words = cap
             output_words = []
-            for c in cap:
+            for c in np.append(cap, [0.0])[1:]:
                 word = np.zeros(config.VOCABULARY_SIZE)
                 word[int(c)] = 1
                 output_words.append(word)
@@ -362,9 +376,9 @@ if __name__ == '__main__':
     test_image_ids = image_ids_list[100000:]
 
     # load word ids
-    id_to_word_file = '../dataset/id_to_word.pickle'
-    word_to_id_file = '../dataset/word_to_id.pickle'
-    embedding_matrix_file = '../dataset/embedding_matrix.pickle'
+    id_to_word_file = '../dataset/dense_img_cap/id_to_word.pickle'
+    word_to_id_file = '../dataset/dense_img_cap/word_to_id.pickle'
+    embedding_matrix_file = '../dataset/dense_img_cap/embedding_matrix.pickle'
     train_rois_file = '../dataset/train_rois.pickle'
     val_rois_file = '../dataset/val_rois.pickle'
 

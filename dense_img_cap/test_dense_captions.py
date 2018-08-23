@@ -36,16 +36,16 @@ class InferenceConfig(DenseCapConfig):
     DETECTION_MAX_INSTANCES = 50
     
     # Padding size
-    PADDING_SIZE = 10
+    PADDING_SIZE = 15
 
     def __init__(self, vocab_size, embedding_weights):
         super(InferenceConfig, self).__init__(vocab_size, embedding_weights)
 
 
 # load word to indices mappings and embeddings
-id_to_word_file = '../dataset/id_to_word.pickle'
-word_to_id_file = '../dataset/word_to_id.pickle'
-embedding_matrix_file = '../dataset/embedding_matrix.pickle'
+id_to_word_file = '../dataset/dense_img_cap/id_to_word.pickle'
+word_to_id_file = '../dataset/dense_img_cap/word_to_id.pickle'
+embedding_matrix_file = '../dataset/dense_img_cap/embedding_matrix.pickle'
 id_to_word = pickle.load(open(id_to_word_file, 'rb'))
 word_to_id = pickle.load(open(word_to_id_file, 'rb'))
 embedding_matrix = pickle.load(open(embedding_matrix_file, 'rb'))

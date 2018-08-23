@@ -31,7 +31,7 @@ class DenseCapConfig(Config):
     VALIDATION_STEPS = 50
 
     # Padding size
-    PADDING_SIZE = 10
+    PADDING_SIZE = 15
 
     def __init__(self, vocab_size, embedding_weights):
         super(DenseCapConfig, self).__init__()
@@ -133,15 +133,13 @@ if __name__ == '__main__':
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
     train_image_ids = image_ids_list[:90000]
-    train_image_ids = [1, 2, 55, 56]
     val_image_ids = image_ids_list[90000:100000]
-    val_image_ids = [65, 77]
     test_image_ids = image_ids_list[100000:]
 
     # load word ids
-    id_to_word_file = '../dataset/id_to_word.pickle'
-    word_to_id_file = '../dataset/word_to_id.pickle'
-    embedding_matrix_file = '../dataset/embedding_matrix.pickle'
+    id_to_word_file = '../dataset/dense_img_cap/id_to_word.pickle'
+    word_to_id_file = '../dataset/dense_img_cap/word_to_id.pickle'
+    embedding_matrix_file = '../dataset/dense_img_cap/embedding_matrix.pickle'
 
     if not os.path.exists(id_to_word_file) or not os.path.exists(word_to_id_file) \
             or not os.path.exists(embedding_matrix_file):

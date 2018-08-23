@@ -1551,6 +1551,16 @@ class DenseImageCapRCNN:
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
 
+            target_captions = KL.Lambda(lambda x: tf.reshape(x, [config.BATCH_SIZE,
+                                                                 x._keras_shape[1],
+                                                                 x._keras_shape[2]]))(target_captions)
+            # Remove the <start> token of the target captions
+            target_captions = KL.Concatenate(axis=-1)([KL.Lambda(lambda t: t[:, :, 1:])(target_captions),
+                                                       KL.Lambda(lambda t: tf.zeros([config.BATCH_SIZE,
+                                                                                     t._keras_shape[1],
+                                                                                     1],
+                                                                                    dtype=tf.int32))(target_captions)])
+
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
                 [input_rpn_match, rpn_class_logits])

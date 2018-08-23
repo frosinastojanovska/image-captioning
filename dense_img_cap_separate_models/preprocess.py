@@ -2,7 +2,6 @@ import json
 import numpy as np
 from string import punctuation
 from collections import Counter
-from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 
 
@@ -10,8 +9,8 @@ def load_corpus(tokens, embeddings, embeddings_dim):
     id_to_word = dict()
     word_to_id = dict()
     embedding_matrix = np.zeros((len(tokens) + 3, embeddings_dim))
-    id_to_word[0] = ''
-    word_to_id[''] = 0
+    id_to_word[0] = '<unk>'
+    word_to_id['<unk>'] = 0
 
     # Add <start> and <end> tokens and initialize them randomly in range [-0.5, 0.5]
     embeddings['<start>'] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
@@ -54,9 +53,7 @@ def tokenize_corpus(data_file, train, embeddings):
                 for tag in tokens:
                     corpus.append(tag)
     frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
-    return set([x[0] for x in frequencies if x[1] >= 15 and x[0] in embeddings and x[0] not in punctuation and
-                x[0] not in set(stopwords.words('english'))])
-    # return set([x[0] for x in frequencies if x[0] in embeddings])
+    return set([x[0] for x in frequencies if x[1] >= 15 and x[0] in embeddings and x[0] not in punctuation])
 
 
 def encode_caption(caption, word_to_id):

@@ -1,22 +1,29 @@
 import json
-import nltk
 import numpy as np
 from string import punctuation
 from collections import Counter
-from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 
 
 def load_corpus(tokens, embeddings, embeddings_dim):
     id_to_word = dict()
     word_to_id = dict()
-    embedding_matrix = np.zeros((len(tokens) + 1, embeddings_dim))
-    id_to_word[0] = '<UNK>'
-    word_to_id['<UNK>'] = 0
+    embedding_matrix = np.zeros((len(tokens) + 3, embeddings_dim))
+    id_to_word[0] = '<unk>'
+    word_to_id['<unk>'] = 0
+
+    # Add <start> and <end> tokens and initialize them randomly in range [-0.5, 0.5]
+    embeddings['<start>'] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
+    id_to_word[1] = '<start>'
+    word_to_id['<start>'] = 1
+    embeddings['<end>'] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
+    id_to_word[2] = '<end>'
+    word_to_id['<end>'] = 2
+
     for i in range(len(tokens)):
-        id_to_word[i + 1] = tokens[i]
-        word_to_id[tokens[i]] = i + 1
-        embedding_matrix[i + 1, :] = embeddings[tokens[i]]
+        id_to_word[i + 3] = tokens[i]
+        word_to_id[tokens[i]] = i + 3
+        embedding_matrix[i + 3, :] = embeddings[tokens[i]]
     return word_to_id, id_to_word, embedding_matrix
 
 
@@ -33,25 +40,20 @@ def load_embeddings(file_name):
     return embeddings
 
 
-def tokenize_corpus(data_file, train, validation, embeddings):
+def tokenize_corpus(data_file, train, embeddings):
     with open(data_file, 'r', encoding='utf-8') as doc:
         data = json.loads(doc.read())
     corpus = list()
     for data_point in data:
-        if data_point['id'] in train or data_point['id'] in validation:
+        if data_point['id'] in train:
             regs = data_point['regions']
             for reg in regs:
                 caption = reg['phrase']
                 tokens = word_tokenize(caption.lower())
-                tags = nltk.pos_tag(tokens)
-                for tag in tags:
-                    if tag[1].startswith('NN'):
-                        corpus.append(tag[0])
+                for tag in tokens:
+                    corpus.append(tag)
     frequencies = sorted(Counter(corpus).items(), key=lambda x: x[1], reverse=True)
-    return set([x[0] for x in frequencies if x[1] >= 15 and
-                x[0] in embeddings and
-                x[0] not in punctuation and
-                x[0] not in set(stopwords.words('english'))])
+    return set([x[0] for x in frequencies if x[1] >= 15 and x[0] in embeddings and x[0] not in punctuation])
 
 
 def encode_caption(caption, word_to_id):
@@ -65,6 +67,17 @@ def encode_caption(caption, word_to_id):
     return np.array(vector)
 
 
+def encode_caption_v2(caption, word_to_id):
+    """ convert caption from string to one-hot array """
+    tokens = word_tokenize(caption.lower())
+    vector = list()
+    for token in tokens:
+        encoded_token = encode_word_v2(token, word_to_id)
+        if len(encoded_token) != 0 and encoded_token[0] != 1:
+            vector.append(encoded_token)
+    return np.array(vector)
+
+
 def encode_word(word, word_to_id):
     """ convert word to its index"""
     if word in word_to_id.keys():
@@ -72,6 +85,19 @@ def encode_word(word, word_to_id):
     else:
         pos = 0
     return pos
+
+
+def encode_word_v2(word, word_to_id):
+    """ convert word to its one-hot vector"""
+    if word in word_to_id.keys():
+        pos = word_to_id[word]
+        vec = np.zeros(len(word_to_id))
+        vec[pos] = 1
+    else:
+        pos = word_to_id['<UNK>']
+        vec = np.zeros(len(word_to_id))
+        vec[pos] = 1
+    return vec
 
 
 def decode_caption(vector, id_to_word):
