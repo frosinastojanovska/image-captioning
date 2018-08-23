@@ -327,20 +327,22 @@ class DenseCaptioningEvaluator:
             scorer = Bleu(4)
         tokenizer = PTBTokenizer()
         scores = []
-        for _, r in zip(tqdm(list(range(len(records)))), records):
+        gens = {}
+        refs = {}
+        i = 0
+        for r in records:
             r1 = [x for x in r if len(x['references']) > 0]
-            gens = {}
-            refs = {}
-            for rec, i in zip(r1, range(len(r1))):
+            for rec in r1:
                 gens[str(i)] = rec['candidate']
                 refs[str(i)] = [sent[0] for sent in rec['references']]
-            gens = tokenizer.tokenize(gens)
-            refs = tokenizer.tokenize(refs)
-            refs.update({key: [] for key in gens if key not in refs})
-            avg_score, all_scores = scorer.compute_score(refs, gens)
-            if method == 'SPICE':
-                all_scores = [s['All']['f'] for s in all_scores]
-            scores.append(all_scores)
+                i += 1
+        gens = tokenizer.tokenize(gens)
+        refs = tokenizer.tokenize(refs)
+        refs.update({key: [] for key in gens if key not in refs})
+        avg_score, all_scores = scorer.compute_score(refs, gens)
+        if method == 'SPICE':
+            all_scores = [s['All']['f'] for s in all_scores]
+        scores.append(all_scores)
 
         return scores
 
