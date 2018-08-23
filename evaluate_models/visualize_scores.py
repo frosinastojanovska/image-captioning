@@ -7,26 +7,52 @@ import numpy as np
 
 def load_scores(model_name):
     scores = {}
-    with open('../dataset/' + model_name + '_spice_scores_p1.pickle', 'rb') as f:
-        spice1 = pickle.load(f)
-    with open('../dataset/' + model_name + '_spice_scores_p2.pickle', 'rb') as f:
-        spice2 = pickle.load(f)
-    spice = np.array(list(spice1[1]) + list(spice2[1]))
-    scores['SPICE'] = (np.average(spice), spice)
-    with open('../dataset/' + model_name + '_meteor_scores.pickle', 'rb') as f:
-        scores['METEOR'] = pickle.load(f)
-    with open('../dataset/' + model_name + '_rouge_scores.pickle', 'rb') as f:
-        scores['ROUGE-L'] = pickle.load(f)
-    with open('../dataset/' + model_name + '_cider_scores.pickle', 'rb') as f:
-        scores['CIDER'] = pickle.load(f)
-    with open('../dataset/' + model_name + '_bleu1_scores.pickle', 'rb') as f:
-        scores['BLEU_1'] = pickle.load(f)
-    with open('../dataset/' + model_name + '_bleu2_scores.pickle', 'rb') as f:
-        scores['BLEU_2'] = pickle.load(f)
-    with open('../dataset/' + model_name + '_bleu3_scores.pickle', 'rb') as f:
-        scores['BLEU_3'] = pickle.load(f)
-    with open('../dataset/' + model_name + '_bleu4_scores.pickle', 'rb') as f:
-        scores['BLEU_4'] = pickle.load(f)
+    if model_name == 'densecap':
+        with open('../dataset/' + model_name + '_scores_spice.pkl', 'rb') as f:
+            spice = pickle.load(f)
+        scores['SPICE'] = (np.average(spice), spice)
+        with open('../dataset/' + model_name + '_scores_rouge.pkl', 'rb') as f:
+            rouge = pickle.load(f)
+        scores['ROUGE-L'] = (np.average(rouge), rouge)
+        with open('../dataset/' + model_name + '_scores_meteor.pkl', 'rb') as f:
+            meteor = pickle.load(f)
+        scores['METEOR'] = (np.average(meteor), meteor)
+        with open('../dataset/' + model_name + '_scores_cider.pkl', 'rb') as f:
+            cider = pickle.load(f)
+        scores['CIDER'] = (np.average(cider), cider)
+        with open('../dataset/' + model_name + '_scores_bleu_1.pkl', 'rb') as f:
+            bleu = pickle.load(f)
+        scores['BLEU_1'] = (np.average(bleu), bleu)
+        with open('../dataset/' + model_name + '_scores_bleu_2.pkl', 'rb') as f:
+            bleu = pickle.load(f)
+        scores['BLEU_2'] = (np.average(bleu), bleu)
+        with open('../dataset/' + model_name + '_scores_bleu_3.pkl', 'rb') as f:
+            bleu = pickle.load(f)
+        scores['BLEU_3'] = (np.average(bleu), bleu)
+        with open('../dataset/' + model_name + '_scores_bleu_4.pkl', 'rb') as f:
+            bleu = pickle.load(f)
+        scores['BLEU_4'] = (np.average(bleu), bleu)
+    else:
+        with open('../dataset/' + model_name + '_spice_scores_p1.pickle', 'rb') as f:
+            spice1 = pickle.load(f)
+        with open('../dataset/' + model_name + '_spice_scores_p2.pickle', 'rb') as f:
+            spice2 = pickle.load(f)
+        spice = np.array(list(spice1[1]) + list(spice2[1]))
+        scores['SPICE'] = (np.average(spice), spice)
+        with open('../dataset/' + model_name + '_rouge_scores.pickle', 'rb') as f:
+            scores['ROUGE-L'] = pickle.load(f)
+        with open('../dataset/' + model_name + '_meteor_scores.pickle', 'rb') as f:
+            scores['METEOR'] = pickle.load(f)
+        with open('../dataset/' + model_name + '_cider_scores.pickle', 'rb') as f:
+            scores['CIDER'] = pickle.load(f)
+        with open('../dataset/' + model_name + '_bleu1_scores.pickle', 'rb') as f:
+            scores['BLEU_1'] = pickle.load(f)
+        with open('../dataset/' + model_name + '_bleu2_scores.pickle', 'rb') as f:
+            scores['BLEU_2'] = pickle.load(f)
+        with open('../dataset/' + model_name + '_bleu3_scores.pickle', 'rb') as f:
+            scores['BLEU_3'] = pickle.load(f)
+        with open('../dataset/' + model_name + '_bleu4_scores.pickle', 'rb') as f:
+            scores['BLEU_4'] = pickle.load(f)
     return scores
 
 
@@ -87,27 +113,40 @@ def plot_graph_loss(values, model_name):
 
 
 if __name__ == '__main__':
-    print('===== Model 2 =====')
-    eval_scores_m2 = load_scores('m1-85')
+    print('=========== Model 1')
+    eval_scores_m1 = load_scores('m1-85')
+    print_average_scores(eval_scores_m1)
+    plot_graph_scores_model_based(eval_scores_m1, 'M1')
+
+    print('=========== Model 2')
+    eval_scores_m2 = load_scores('m2-85')
     print_average_scores(eval_scores_m2)
     plot_graph_scores_model_based(eval_scores_m2, 'M2')
 
-    print('===== Model 3 =====')
-    eval_scores_m3 = load_scores('m2-85')
-    print_average_scores(eval_scores_m3)
-    plot_graph_scores_model_based(eval_scores_m3, 'M3')
+    print('=========== DenseCap')
+    eval_scores_densecap = load_scores('densecap')
+    print_average_scores(eval_scores_densecap)
+    plot_graph_scores_model_based(eval_scores_densecap, 'DenseCap')
 
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'SPICE')
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'ROUGE-L')
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'METEOR')
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'CIDER')
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_1')
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_2')
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_3')
-    plot_graph_scores_metric_based({'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_4')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
+                                   'SPICE')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
+                                   'ROUGE-L')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
+                                   'METEOR')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
+                                   'CIDER')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
+                                   'BLEU_1')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
+                                   'BLEU_2')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
+                                   'BLEU_3')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
+                                   'BLEU_4')
 
-    loss_values_m2 = load_loss_values('logs/text_generation_m1.log')
+    loss_values_m1 = load_loss_values('logs/text_generation_m1.log')
+    plot_graph_loss(loss_values_m1, 'M1')
+
+    loss_values_m2 = load_loss_values('logs/text_generation_m2.log')
     plot_graph_loss(loss_values_m2, 'M2')
-
-    loss_values_m3 = load_loss_values('logs/text_generation_m2.log')
-    plot_graph_loss(loss_values_m3, 'M3')
