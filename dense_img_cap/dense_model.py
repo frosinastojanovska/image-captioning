@@ -923,8 +923,14 @@ def rpn_bbox_loss_graph(config, target_deltas, rpn_match, rpn_bbox):
 def imgcap_caption_loss_graph(target_captions, generated_captions):
     """ Returns caption word one-hot vector loss
     """
-    loss = keras.losses.sparse_categorical_crossentropy(target_captions, generated_captions)
-    loss = tf.reduce_mean(loss)
+    indices = tf.where(target_captions > 0)
+    y_true_masked = tf.gather_nd(target_captions, indices)
+    y_pred_masked = tf.gather_nd(generated_captions, indices)
+
+    loss = K.switch(tf.size(y_true_masked) > 0,
+                    K.sparse_categorical_crossentropy(target=y_true_masked, output=y_pred_masked),
+                    tf.constant(0.0))
+    loss = K.mean(loss)
     return loss
 
 

@@ -144,7 +144,7 @@ if __name__ == '__main__':
     if not os.path.exists(id_to_word_file) or not os.path.exists(word_to_id_file) \
             or not os.path.exists(embedding_matrix_file):
         embeddings = load_embeddings(embeddings_file_path)
-        tokens = tokenize_corpus(data_file_path, train_image_ids, val_image_ids, embeddings)
+        tokens = tokenize_corpus(data_file_path, train_image_ids, embeddings)
         word_to_id, id_to_word, embedding_matrix = load_corpus(list(tokens), embeddings, 300)
 
         with open(id_to_word_file, 'wb') as f:

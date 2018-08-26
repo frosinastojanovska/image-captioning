@@ -283,6 +283,18 @@ def build_lstm_model(features_input, config, units, mode):
         return KM.Model(features, outputs, name="imgcap_lstm_model")
 
 
+def roi_caption_loss(y_true, y_pred):
+    indices = tf.where(tf.reduce_sum(y_true, axis=-1) > 0)
+    y_true_masked = tf.gather_nd(y_true, indices)
+    y_pred_masked = tf.gather_nd(y_pred, indices)
+
+    loss = K.switch(tf.size(y_true_masked) > 0,
+                    K.categorical_crossentropy(target=y_true_masked, output=y_pred_masked),
+                    tf.constant(0.0))
+    loss = K.mean(loss)
+    return loss
+
+
 def build_test_data(dataset, model):
     if os.path.exists('test_x.pkl'):
         with open('test_x.pkl', 'rb') as f:
@@ -413,7 +425,7 @@ if __name__ == '__main__':
         model = build_lstm_model([7, 7, 256], config, 512, 'training')
         opt = keras.optimizers.Adam(amsgrad=True)
         model.compile(optimizer=opt,
-                      loss=keras.losses.categorical_crossentropy)
+                      loss=roi_caption_loss)
         model._make_train_function()
 
         # Training dataset
