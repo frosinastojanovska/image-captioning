@@ -13,10 +13,10 @@ def load_corpus(tokens, embeddings, embeddings_dim):
     word_to_id['<unk>'] = 0
 
     # Add <start> and <end> tokens and initialize them randomly in range [-0.5, 0.5]
-    embeddings['<start>'] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
+    embedding_matrix[1, :] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
     id_to_word[1] = '<start>'
     word_to_id['<start>'] = 1
-    embeddings['<end>'] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
+    embedding_matrix[2, :] = np.random.mtrand._rand.rand(embeddings_dim) - 0.5
     id_to_word[2] = '<end>'
     word_to_id['<end>'] = 2
 
