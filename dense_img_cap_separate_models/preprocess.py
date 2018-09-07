@@ -105,7 +105,6 @@ def decode_caption(vector, id_to_word):
     caption = ''
     for v in vector:
         caption += decode_word(v, id_to_word) + ' '
-    print(caption)
     return caption
 
 

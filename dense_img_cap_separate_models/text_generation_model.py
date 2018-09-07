@@ -17,13 +17,13 @@ from modified_dense_model import BatchNorm
 from generate_one_roi_features import generate_features, load_model
 from preprocess import encode_caption, load_corpus, load_embeddings, tokenize_corpus, decode_caption
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 
 class DenseCapConfig(Config):
-    """Configuration for training on the toy shapes dataset.
+    """Configuration for training on the dense caption dataset.
     Derives from the base Config class and overrides values specific
-    to the toy shapes dataset.
+    to the caption dataset.
     """
     # Give the configuration a recognizable name
     NAME = "dense image captioning"
@@ -289,9 +289,8 @@ def roi_caption_loss(y_true, y_pred):
     y_pred_masked = tf.gather_nd(y_pred, indices)
 
     loss = K.switch(tf.size(y_true_masked) > 0,
-                    K.categorical_crossentropy(target=y_true_masked, output=y_pred_masked),
+                    K.mean(K.categorical_crossentropy(target=y_true_masked, output=y_pred_masked)),
                     tf.constant(0.0))
-    loss = K.mean(loss)
     return loss
 
 
@@ -373,7 +372,7 @@ def data_generator(dataset, features_model, config, batch_size, shuffle=False):
 
 
 if __name__ == '__main__':
-    train = True
+    train = False
     embeddings_file_path = '../dataset/glove.6B.300d.txt'
 
     data_directory = '../dataset/visual genome/'
@@ -472,19 +471,22 @@ if __name__ == '__main__':
                             callbacks=[checkpoint, csv_logger], validation_data=next(val_data_generator), verbose=1)
         model.save_weights('models/model-25-2.47.h5')
     else:
-        config = DenseCapConfig(len(id_to_word), embedding_matrix, 2)
+        config = DenseCapConfig(len(id_to_word), embedding_matrix, 1)
         config.display()
 
         model = build_lstm_model([7, 7, 256], config, 512, 'inference')
 
         # Test dataset
         dataset_test = VisualGenomeDataset(word_to_id, config.PADDING_SIZE)
-        dataset_test.load_visual_genome(data_directory, test_image_ids[:2], image_meta_file_path,
+        dataset_test.load_visual_genome(data_directory, [2318201], image_meta_file_path,
                                         data_file_path)
         dataset_test.prepare()
-        model.load_weights('models/model-25-2.47.h5')
+        model.load_weights('models/model-43-1.73.h5')
         test_X, test_y = build_test_data(dataset_test, features_model)
         test_y = keras.utils.to_categorical(test_y, num_classes=config.VOCABULARY_SIZE)
         result = model.predict(test_X, batch_size=config.BATCH_SIZE, verbose=1)
         for sent in result:
+            print(decode_caption(sent, id_to_word))
+        print('True captions:')
+        for sent in test_y:
             print(decode_caption(sent, id_to_word))
