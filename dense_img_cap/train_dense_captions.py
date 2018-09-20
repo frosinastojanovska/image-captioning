@@ -27,7 +27,7 @@ class DenseCapConfig(Config):
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
 
-    STEPS_PER_EPOCH = 500
+    STEPS_PER_EPOCH = 1000
     VALIDATION_STEPS = 50
 
     # Padding size
@@ -95,6 +95,9 @@ class VisualGenomeDataset(Dataset):
             cap = self.encode_region_caption(caption[0])
             if cap.size != 0:
                 rois.append(roi)
+                # add <start> and <end> tokens
+                cap = np.hstack((np.array(1), cap, np.array(2))) if len(cap) < (self.padding_size - 2) \
+                    else np.hstack((np.array(1), cap[:(self.padding_size - 2)], np.array(2)))
                 caps.append(cap)
         captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
         rois = np.array(rois)
@@ -189,6 +192,7 @@ if __name__ == '__main__':
         # Load weights trained on MS COCO, but skip layers that
         # are different
         model.load_weights(COCO_MODEL_PATH, by_name=True)
+        model.load_weights('../dense_img_cap_separate_models/models/model-47-1.74.h5', by_name=True)
 
     print(model.keras_model.summary())
 
@@ -199,8 +203,8 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE,
-                epochs=250,
-                layers="caption_only")
+                epochs=100,
+                layers="no_backbone")
 
     end_time = time.time()
     print(end_time - start_time)

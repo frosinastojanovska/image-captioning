@@ -1345,7 +1345,7 @@ class DenseImageCapRCNN:
     The actual Keras model is in the keras_model property.
     """
 
-    def __init__(self, mode, config, model_dir):
+    def __init__(self, mode, config, model_dir, use_generated_rois=False):
         """
         mode: Either "training" or "inference"
         config: A Sub-class of the Config class
@@ -1356,6 +1356,7 @@ class DenseImageCapRCNN:
         self.config = config
         self.model_dir = model_dir
         self.set_log_dir()
+        self.use_generated_rois = use_generated_rois
         self.keras_model = self.build(mode=mode, config=config)
 
     def build(self, mode, config):
@@ -1379,8 +1380,9 @@ class DenseImageCapRCNN:
             shape=config.IMAGE_SHAPE.tolist(), name="input_image")
         input_image_meta = KL.Input(shape=[None], name="input_image_meta")
 
-        input_rpn_bbox = KL.Input(
-            shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
+        if not self.use_generated_rois:
+            input_rpn_bbox = KL.Input(
+                shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
 
         if mode == "training":
             # RPN GT
@@ -1491,9 +1493,9 @@ class DenseImageCapRCNN:
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
             _, img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
-                                                    config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE, config.EMBEDDING_SIZE, config.PADDING_SIZE,
-                                                    128, False)
+                                                       config.IMAGE_SHAPE,
+                                                       config.POOL_SIZE, config.EMBEDDING_SIZE, config.PADDING_SIZE,
+                                                       128, False)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
@@ -1517,10 +1519,11 @@ class DenseImageCapRCNN:
         else:
             # Network Heads
             # Caption text generator
-            h, w = K.shape(input_image)[1], K.shape(input_image)[2]
-            image_scale = K.cast(K.stack([h, w, h, w], axis=0), tf.float32)
-            gt_boxes = KL.Lambda(lambda x: x / image_scale)(input_rpn_bbox)
-            rpn_rois = gt_boxes
+            if not self.use_generated_rois:
+                h, w = K.shape(input_image)[1], K.shape(input_image)[2]
+                image_scale = K.cast(K.stack([h, w, h, w], axis=0), tf.float32)
+                gt_boxes = KL.Lambda(lambda x: x / image_scale)(input_rpn_bbox)
+                rpn_rois = gt_boxes
 
             features, img_cap_captions = lstm_generator_graph(rpn_rois, img_cap_feature_maps,
                                                               config.IMAGE_SHAPE,
@@ -1534,10 +1537,16 @@ class DenseImageCapRCNN:
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
             generations = GenerationMatchLayer(config, name="mrcnn_detection")(
                 [rpn_rois, img_cap_captions, input_image_meta])
-            model = KM.Model([input_image, input_rpn_bbox, input_image_meta],
-                             [generations, img_cap_captions, features,
-                              rpn_rois, rpn_class, rpn_bbox],
-                             name='rcnn_imgcap')
+            if self.use_generated_rois:
+                model = KM.Model([input_image, input_image_meta],
+                                 [generations, img_cap_captions, features,
+                                  rpn_rois, rpn_class, rpn_bbox],
+                                 name='rcnn_imgcap')
+            else:
+                model = KM.Model([input_image, input_rpn_bbox, input_image_meta],
+                                 [generations, img_cap_captions, features,
+                                  rpn_rois, rpn_class, rpn_bbox],
+                                 name='rcnn_imgcap')
 
         # Add multi-GPU support.
         if config.GPU_COUNT > 1:

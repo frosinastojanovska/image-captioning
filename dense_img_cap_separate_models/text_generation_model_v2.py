@@ -4,16 +4,11 @@ import keras
 import pickle
 import numpy as np
 import tensorflow as tf
-import keras.backend as K
 import keras.layers as KL
 import keras.models as KM
 import skimage.io as skiimage_io
 import skimage.color as skimage_color
 from keras.preprocessing.sequence import pad_sequences
-from tensorflow.contrib.keras.api.keras.applications.vgg16 import VGG16, preprocess_input
-from tensorflow.contrib.keras.api.keras.preprocessing import image
-from tensorflow.contrib.keras.api.keras.models import Model
-import cv2
 
 from utils import Dataset
 from config import Config
@@ -109,7 +104,12 @@ class VisualGenomeDataset(Dataset):
         caps = []
         for roi, caption in zip(image_info['rois'], image_info['captions']):
             cap = self.encode_region_caption(caption[0])
-            if cap.size != 0:
+            if cap.size > 0:            
+                start = np.zeros((1, cap.shape[1]))
+                start[0, 1] = 1
+                end = np.zeros((1, cap.shape[1]))
+                end[0, 2] = 1
+                cap = np.vstack((start, cap, end))
                 rois.append(roi)
                 caps.append(cap)
         # captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
@@ -169,38 +169,6 @@ def build_model(features_shape, word_shape, config, units, inject=True):
     return KM.Model(inputs=[input_f, input_w], outputs=result)
 
 
-def build_train_data(dataset, model):
-    if os.path.exists('train_v2_x_f.pkl'):
-        with open('train_v2_x_f.pkl', 'rb') as f:
-            train_x_f = pickle.load(f)
-        with open('train_v2_x_w.pkl', 'rb') as f:
-            train_x_w = pickle.load(f)
-        with open('train_v2_y.pkl', 'rb') as f:
-            train_y = pickle.load(f)
-    else:
-        train_x_f = []
-        train_x_w = []
-        train_y = []
-        for image_id in dataset._image_ids:
-            features = generate_features(dataset, image_id, model)
-            _, captions = dataset.load_captions_and_rois(image_id)
-            steps = captions.shape[0]
-            for i in range(steps):
-                f = features[i]
-                for j in range(1, len(captions[i])):
-                    train_x_f.append(f)
-                    train_x_w.append(pad_sequences([[np.argmax(cap) for cap in captions[i][:j]]], config.PADDING_SIZE)[0])
-                    train_y.append(captions[i][j])
-        with open('train_v2_x_f.pkl', 'wb') as f:
-            pickle.dump(train_x_f, f, pickle.HIGHEST_PROTOCOL)
-        with open('train_v2_x_w.pkl', 'wb') as f:
-            pickle.dump(train_x_w, f, pickle.HIGHEST_PROTOCOL)
-        with open('train_v2_y.pkl', 'wb') as f:
-            pickle.dump(train_y, f, pickle.HIGHEST_PROTOCOL)
-
-    return np.array(train_x_f), np.array(train_x_w), np.array(train_y)
-
-
 def data_generator(dataset, features_model, config, batch_size, shuffle=False):
     b = 0
     sequence_index = -1
@@ -227,7 +195,7 @@ def data_generator(dataset, features_model, config, batch_size, shuffle=False):
             next_word_feature[next_word] = 1
             if b == 0:
                 batch_image_features = np.zeros((batch_size,) + roi_features.shape, dtype=roi_features.dtype)
-                batch_prev_words = np.zeros((batch_size,) +  prev_word_features.shape, dtype=prev_word_features.dtype)
+                batch_prev_words = np.zeros((batch_size,) + prev_word_features.shape, dtype=prev_word_features.dtype)
                 batch_next_word = np.zeros((batch_size,) + next_word_feature.shape, dtype=next_word_feature.dtype)
             batch_image_features[b] = roi_features
             batch_prev_words[b] = prev_word_features
@@ -241,8 +209,8 @@ def data_generator(dataset, features_model, config, batch_size, shuffle=False):
 
 
 if __name__ == '__main__':
-    train = False
-    inject = False
+    train = True
+    inject = True
     embeddings_file_path = '../dataset/glove.6B.300d.txt'
 
     data_directory = '../dataset/visual genome/'
@@ -256,9 +224,9 @@ if __name__ == '__main__':
     train_val_image_ids = image_ids_list[:100000]
     test_image_ids = image_ids_list[100000:]
 
-    id_to_word_file = '../dataset/id_to_word.pickle'
-    word_to_id_file = '../dataset/word_to_id.pickle'
-    embedding_matrix_file = '../dataset/embedding_matrix.pickle'
+    id_to_word_file = '../dataset/dense_img_cap/id_to_word.pickle'
+    word_to_id_file = '../dataset/dense_img_cap/word_to_id.pickle'
+    embedding_matrix_file = '../dataset/dense_img_cap/embedding_matrix.pickle'
     train_sequences_file = '../dataset/train_sequences.pickle'
     val_sequences_file = '../dataset/val_sequences.pickle'
 
@@ -288,7 +256,7 @@ if __name__ == '__main__':
     features_model = load_model()
 
     if inject:
-        model_filepath = 'models/model1-{epoch:02d}-{val_loss:.2f}.h5'
+        model_filepath = 'models1/model1-{epoch:02d}-{val_loss:.2f}.h5'
         logs_filepath = 'logs/text_generation_m1.log'
     else:
         model_filepath = 'models/model2-{epoch:02d}-{val_loss:.2f}.h5'
@@ -333,13 +301,12 @@ if __name__ == '__main__':
         train_data_generator = data_generator(dataset_train, features_model, config, 1024)
         val_data_generator = data_generator(dataset_val, features_model, config, 1024)
 
-        # train_X_f, train_X_w, train_y = build_train_data(dataset_train, features_model)
-
         checkpoint = keras.callbacks.ModelCheckpoint(model_filepath, verbose=1, save_weights_only=True, mode='min')
         csv_logger = keras.callbacks.CSVLogger(logs_filepath)
         print(model.trainable_weights)
         print('Train on ' + str(len(train_sequences)) + ' samples')
         print('Validate on ' + str(len(val_sequences)) + ' samples')
+        model.load_weights('models/model1-85-3.69.h5', by_name=True, skip_mismatch=True)
         model.fit_generator(train_data_generator, epochs=200, steps_per_epoch=500,
                             callbacks=[checkpoint, csv_logger], validation_data=next(val_data_generator), verbose=1)
         #model.fit([train_X_f, train_X_w], train_y, epochs=200, batch_size=32, shuffle=True,

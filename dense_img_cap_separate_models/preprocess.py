@@ -94,7 +94,7 @@ def encode_word_v2(word, word_to_id):
         vec = np.zeros(len(word_to_id))
         vec[pos] = 1
     else:
-        pos = word_to_id['<UNK>']
+        pos = word_to_id['<unk>']
         vec = np.zeros(len(word_to_id))
         vec[pos] = 1
     return vec

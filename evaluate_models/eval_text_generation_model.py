@@ -138,13 +138,13 @@ def generate_predictions(model, model_name, dataset, features_model, config, id_
         for image_id in tqdm(dataset.image_ids):
             features = generate_features(dataset, image_id, features_model)
             _, captions = dataset.load_original_captions_and_rois(image_id)
-            steps = features.shape[0]
+            result = model.predict(features, batch_size=config.BATCH_SIZE)
+            steps = result.shape[0]
             for i in range(steps):
-                f = features[i]
                 c = captions[i]
-                res = model.predict(np.array([f]), batch_size=config.BATCH_SIZE)
-                predicted_caption = decode_caption(res[0], id_to_word).split(separator, 1)[0]
-                real_caption = c[0]
+                res = result[i]
+                predicted_caption = decode_caption(res, id_to_word).split(separator, 1)[0]
+                real_caption = c[0].lower()
                 predictions.append({'p': predicted_caption, 'r': real_caption})
 
         with open('dataset/' + model_name + '_predictions.pickle', 'wb') as f:
@@ -241,8 +241,8 @@ if __name__ == '__main__':
     dataset_test.load_visual_genome(data_directory, test_image_ids, image_meta_file_path,
                                     data_file_path)
     dataset_test.prepare()
-    model.load_weights('evaluate_models/models/model3-47-1.74.h5')
-    model_name = 'm3-47'
+    model.load_weights('evaluate_models/models/model3-70-1.69.h5')
+    model_name = 'm3-70'
 
     preds = generate_predictions(model, model_name, dataset_test, features_model, config, id_to_word)
     score_predictions(preds, model_name)

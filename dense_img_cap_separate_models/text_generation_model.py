@@ -17,7 +17,7 @@ from modified_dense_model import BatchNorm
 from generate_one_roi_features import generate_features, load_model
 from preprocess import encode_caption, load_corpus, load_embeddings, tokenize_corpus, decode_caption
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 class DenseCapConfig(Config):
@@ -467,9 +467,9 @@ if __name__ == '__main__':
         print('Validate on ' + str(len(val_rois)) + ' samples')
         model.load_weights('./mask_rcnn_coco.h5', by_name=True)
 
-        model.fit_generator(train_data_generator, epochs=50, steps_per_epoch=500,
-                            callbacks=[checkpoint, csv_logger], validation_data=next(val_data_generator), verbose=1)
-        model.save_weights('models/model-25-2.47.h5')
+        model.fit_generator(train_data_generator, epochs=100, steps_per_epoch=500,
+                            callbacks=[checkpoint, csv_logger], validation_data=next(val_data_generator),
+                            max_queue_size=100, verbose=1)
     else:
         config = DenseCapConfig(len(id_to_word), embedding_matrix, 1)
         config.display()
@@ -481,7 +481,7 @@ if __name__ == '__main__':
         dataset_test.load_visual_genome(data_directory, [2318201], image_meta_file_path,
                                         data_file_path)
         dataset_test.prepare()
-        model.load_weights('models/model-43-1.73.h5')
+        model.load_weights('models/model-70-1.69.h5')
         test_X, test_y = build_test_data(dataset_test, features_model)
         test_y = keras.utils.to_categorical(test_y, num_classes=config.VOCABULARY_SIZE)
         result = model.predict(test_X, batch_size=config.BATCH_SIZE, verbose=1)

@@ -4,7 +4,7 @@ import numpy as np
 from modified_dense_model import DenseImageCapRCNN
 from config import Config
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 # Root directory of the project

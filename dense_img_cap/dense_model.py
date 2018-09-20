@@ -785,6 +785,17 @@ def word_generation_model(features_input, lstm_units, config):
 
 
 def build_roi_caption_model_training(features_input, lstm_units, config):
+    """ Model for training ROI caption generation
+
+    :param features_input: ROI features shape
+    :type features_input: list(int)
+    :param lstm_units: size of the units of LSTM cells
+    :type lstm_units: int
+    :param config: configuration object
+    :type config: DenseCapConfig object
+    :return: roi caption generation model
+    :rtype: KM.Model object
+    """
     inputs = KL.Input(batch_shape=[config.BATCH_SIZE] + features_input, name="input_imgcap_caption_features")
     feature = KL.Lambda(lambda x: x[:, :, :-config.PADDING_SIZE], name="imgcap_caption_feature")(inputs)
     gt_captions = KL.Lambda(lambda x: x[:, :, -config.PADDING_SIZE:], name="imgcap_caption_gt_captions")(inputs)
@@ -807,6 +818,8 @@ def build_roi_caption_model_training(features_input, lstm_units, config):
 
 
 class ROICaptionInferenceLayer(KL.Layer):
+    """ Layer for generating ROI caption"""
+
     def __init__(self, word_model, config):
         super(ROICaptionInferenceLayer, self).__init__()
         self.word_model = word_model
@@ -928,9 +941,8 @@ def imgcap_caption_loss_graph(target_captions, generated_captions):
     y_pred_masked = tf.gather_nd(generated_captions, indices)
 
     loss = K.switch(tf.size(y_true_masked) > 0,
-                    K.sparse_categorical_crossentropy(target=y_true_masked, output=y_pred_masked),
+                    K.mean(K.sparse_categorical_crossentropy(target=y_true_masked, output=y_pred_masked)),
                     tf.constant(0.0))
-    loss = K.mean(loss)
     return loss
 
 
@@ -1817,11 +1829,11 @@ class DenseImageCapRCNN:
         # Pre-defined layer regular expressions
         layer_regex = {
             # all layers but the backbone
-            "no_backbone": r"(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "no_backbone": r"(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)|(mrcnn\_.*)",
             # From a specific Resnet stage and up
-            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
-            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
-            "5+": r"(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)|(mrcnn\_.*)",
+            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)|(mrcnn\_.*)",
+            "5+": r"(res5.*)|(bn5.*)|(imgcap\_.*)|(rpn\_.*)|(fpn\_.*)|(mrcnn\_.*)",
             # All layers
             "all": ".*",
             # Only LSTM
@@ -1864,12 +1876,11 @@ class DenseImageCapRCNN:
             initial_epoch=self.epoch,
             epochs=epochs,
             steps_per_epoch=self.config.STEPS_PER_EPOCH,
-            # steps_per_epoch=len(train_dataset.image_ids) // self.config.BATCH_SIZE,
             callbacks=callbacks,
             validation_data=next(val_generator),
             validation_steps=self.config.VALIDATION_STEPS,
             max_queue_size=100,
-            workers=workers,
+            workers=0,  # workers
             use_multiprocessing=False,
             verbose=1
         )
