@@ -114,39 +114,39 @@ def plot_graph_loss(values, model_name):
 
 if __name__ == '__main__':
     print('=========== Model 1')
-    eval_scores_m1 = load_scores('m1-85')
+    eval_scores_m1 = load_scores('m1-2-85')
     print_average_scores(eval_scores_m1)
     plot_graph_scores_model_based(eval_scores_m1, 'M1')
 
     print('=========== Model 2')
-    eval_scores_m2 = load_scores('m2-85')
+    eval_scores_m2 = load_scores('m2-2-85')
     print_average_scores(eval_scores_m2)
     plot_graph_scores_model_based(eval_scores_m2, 'M2')
+
+    print('=========== Model 3')
+    eval_scores_m3 = load_scores('m3-70')
+    print_average_scores(eval_scores_m3)
+    plot_graph_scores_model_based(eval_scores_m3, 'M3')
 
     print('=========== DenseCap')
     eval_scores_densecap = load_scores('densecap')
     print_average_scores(eval_scores_densecap)
     plot_graph_scores_model_based(eval_scores_densecap, 'DenseCap')
 
-    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
-                                   'SPICE')
-    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
-                                   'ROUGE-L')
-    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
-                                   'METEOR')
-    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
-                                   'CIDER')
-    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
-                                   'BLEU_1')
-    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
-                                   'BLEU_2')
-    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
-                                   'BLEU_3')
-    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'DenseCap': eval_scores_densecap},
-                                   'BLEU_4')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'SPICE')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'ROUGE-L')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'METEOR')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'CIDER')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_1')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_2')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_3')
+    plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'BLEU_4')
 
     loss_values_m1 = load_loss_values('logs/text_generation_m1.log')
     plot_graph_loss(loss_values_m1, 'M1')
 
     loss_values_m2 = load_loss_values('logs/text_generation_m2.log')
     plot_graph_loss(loss_values_m2, 'M2')
+
+    loss_values_m3 = load_loss_values('logs/text_generation_m3.log')
+    plot_graph_loss(loss_values_m2, 'M3')
