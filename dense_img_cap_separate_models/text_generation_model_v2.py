@@ -9,6 +9,7 @@ import keras.models as KM
 import skimage.io as skiimage_io
 import skimage.color as skimage_color
 from keras.preprocessing.sequence import pad_sequences
+from tqdm import tqdm
 
 from utils import Dataset
 from config import Config
@@ -104,12 +105,7 @@ class VisualGenomeDataset(Dataset):
         caps = []
         for roi, caption in zip(image_info['rois'], image_info['captions']):
             cap = self.encode_region_caption(caption[0])
-            if cap.size > 0:            
-                start = np.zeros((1, cap.shape[1]))
-                start[0, 1] = 1
-                end = np.zeros((1, cap.shape[1]))
-                end[0, 2] = 1
-                cap = np.vstack((start, cap, end))
+            if cap.size != 0:
                 rois.append(roi)
                 caps.append(cap)
         # captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
@@ -126,14 +122,14 @@ class VisualGenomeDataset(Dataset):
 
     def encode_region_caption(self, caption):
         """ Convert caption to word embedding vector """
-        return encode_caption_v2(caption, self.word_to_id)
+        return encode_caption_v2('<START> ' + caption + ' <END>', self.word_to_id)
 
 
 def load_sequences(dataset):
     sequences = []
-    for image_id in dataset._image_ids:
+    for _, image_id in zip(tqdm(list(range(len(dataset._image_ids)))), dataset._image_ids):
         _, captions = dataset.load_captions_and_rois(image_id)
-        steps = captions.shape[0]
+        steps = min(captions.shape[0], 50)
         for i in range(steps):
             for j in range(1, len(captions[i])):
                 sequences.append((image_id, i, [np.argmax(cap) for cap in captions[i][:j]], np.argmax(captions[i][j])))
@@ -195,7 +191,7 @@ def data_generator(dataset, features_model, config, batch_size, shuffle=False):
             next_word_feature[next_word] = 1
             if b == 0:
                 batch_image_features = np.zeros((batch_size,) + roi_features.shape, dtype=roi_features.dtype)
-                batch_prev_words = np.zeros((batch_size,) + prev_word_features.shape, dtype=prev_word_features.dtype)
+                batch_prev_words = np.zeros((batch_size,) +  prev_word_features.shape, dtype=prev_word_features.dtype)
                 batch_next_word = np.zeros((batch_size,) + next_word_feature.shape, dtype=next_word_feature.dtype)
             batch_image_features[b] = roi_features
             batch_prev_words[b] = prev_word_features
@@ -224,9 +220,9 @@ if __name__ == '__main__':
     train_val_image_ids = image_ids_list[:100000]
     test_image_ids = image_ids_list[100000:]
 
-    id_to_word_file = '../dataset/dense_img_cap/id_to_word.pickle'
-    word_to_id_file = '../dataset/dense_img_cap/word_to_id.pickle'
-    embedding_matrix_file = '../dataset/dense_img_cap/embedding_matrix.pickle'
+    id_to_word_file = '../dataset/id_to_word_v2.pickle'
+    word_to_id_file = '../dataset/word_to_id_v2.pickle'
+    embedding_matrix_file = '../dataset/embedding_matrix_v2.pickle'
     train_sequences_file = '../dataset/train_sequences.pickle'
     val_sequences_file = '../dataset/val_sequences.pickle'
 
@@ -307,7 +303,7 @@ if __name__ == '__main__':
         print('Train on ' + str(len(train_sequences)) + ' samples')
         print('Validate on ' + str(len(val_sequences)) + ' samples')
         model.load_weights('models/model1-85-3.69.h5', by_name=True, skip_mismatch=True)
-        model.fit_generator(train_data_generator, epochs=200, steps_per_epoch=500,
+        model.fit_generator(train_data_generator, epochs=50, steps_per_epoch=500,
                             callbacks=[checkpoint, csv_logger], validation_data=next(val_data_generator), verbose=1)
         #model.fit([train_X_f, train_X_w], train_y, epochs=200, batch_size=32, shuffle=True,
         #          callbacks=[checkpoint, csv_logger], validation_split=0.2)
