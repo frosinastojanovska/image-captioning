@@ -73,7 +73,7 @@ class Config(object):
 
     # ROIs kept after non-maximum suppression (training and inference)
     POST_NMS_ROIS_TRAINING = 2000
-    POST_NMS_ROIS_INFERENCE = 1000
+    POST_NMS_ROIS_INFERENCE = 200
 
     # Input image resizing
     # Images are resized such that the smallest side is >= IMAGE_MIN_DIM and
@@ -117,7 +117,7 @@ class Config(object):
     DETECTION_MIN_CONFIDENCE = 0.7
 
     # Non-maximum suppression threshold for detection
-    DETECTION_NMS_THRESHOLD = 0.3
+    DETECTION_NMS_THRESHOLD = 0.7
 
     # Learning rate and momentum
     # The Mask RCNN paper uses lr=0.02, but on TensorFlow it causes

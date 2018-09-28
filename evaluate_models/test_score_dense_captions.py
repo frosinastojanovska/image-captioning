@@ -2,15 +2,9 @@ import os
 import json
 import pickle
 import numpy as np
-import skimage.io as skiimage_io
-import skimage.color as skimage_color
-from tqdm import tqdm
+from keras.preprocessing.sequence import pad_sequences
 
-from utils import Dataset, compute_overlaps
-from preprocess import decode_caption, encode_caption_v2
-from dense_model import DenseImageCapRCNN
-from config import Config
-
+from utils import compute_overlaps, non_max_suppression, resize_image
 
 from eval.spice.spice import Spice
 from eval.rouge.rouge import Rouge
@@ -18,111 +12,12 @@ from eval.meteor.meteor import Meteor
 from eval.cider.cider import Cider
 from eval.bleu.bleu import Bleu
 from eval.tokenizer.ptbtokenizer import PTBTokenizer
+from generate_one_roi_features import load_model
+from preprocess import decode_word, load_embeddings, tokenize_corpus, load_corpus
+from eval_text_generation_model_v2 import build_model, DenseCapConfig, VisualGenomeDataset
+from tqdm import tqdm
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-
-
-class DenseCapConfig(Config):
-    """Configuration for training on the toy shapes dataset.
-    Derives from the base Config class and overrides values specific
-    to the toy shapes dataset.
-    """
-    # Give the configuration a recognizable name
-    NAME = "dense image captioning"
-
-    # Train on 1 GPU and n images per GPU. Batch size is n (GPUs * images/GPU).
-    GPU_COUNT = 1
-    IMAGES_PER_GPU = 1
-
-    BATCH_SIZE = 64
-
-    STEPS_PER_EPOCH = 500
-    VALIDATION_STEPS = 50
-
-    # Padding size
-    PADDING_SIZE = 10
-
-    def __init__(self, vocab_size, embedding_weights):
-        super(DenseCapConfig, self).__init__()
-        # Vocabulary size
-        self.VOCABULARY_SIZE = vocab_size
-        self.EMBEDDING_WEIGHTS = embedding_weights
-        self.EMBEDDING_SIZE = embedding_weights.shape[1]
-
-
-class VisualGenomeDataset(Dataset):
-    def __init__(self, words_to_ids, padding_size):
-        super(VisualGenomeDataset, self).__init__()
-        self.word_to_id = words_to_ids
-        self.padding_size = padding_size
-
-    def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
-        with open(data_file, 'r', encoding='utf-8') as doc:
-            img_data = json.loads(doc.read())
-        data = dict()
-        for x in img_data:
-            data[x['id']] = x['regions']
-
-        with open(image_meta_file, 'r', encoding='utf-8') as doc:
-            img_meta = json.loads(doc.read())
-        image_meta = dict()
-        for x in img_meta:
-            image_meta[x['image_id']] = x
-
-        # Add images
-        for i in image_ids:
-            captions = [[d['phrase']] for d in data[i]]
-            self.add_image(
-                "VisualGenome", image_id=i,
-                path=os.path.join(data_dir, '{}.jpg'.format(i)),
-                width=image_meta[i]['width'],
-                height=image_meta[i]['height'],
-                rois=[[d['y'], d['x'], d['y'] + d['height'], d['x'] + d['width']] for d in data[i]],
-                captions=captions
-            )
-
-    def add_sequences(self, sequences):
-        self.sequences = sequences
-
-    def image_reference(self, image_id):
-        """ Return a link to the image in the Stanford Website. """
-        info = self.image_info[image_id]
-        return "https://cs.stanford.edu/people/rak248/VG_100K/{}.jpg".format(info["id"])
-
-    def load_image(self, image_id):
-        """ Load the specified image and return a [H,W,3] Numpy array. """
-        # Load image
-        image = skiimage_io.imread(self.image_info[image_id]['path'])
-        # If grayscale. Convert to RGB for consistency.
-        if image.ndim != 3:
-            image = skimage_color.gray2rgb(image)
-        return image
-
-    def load_captions_and_rois(self, image_id):
-        """ Generate instance captions of the given image ID. """
-        image_info = self.image_info[image_id]
-        rois = []
-        caps = []
-        for roi, caption in zip(image_info['rois'], image_info['captions']):
-            cap = self.encode_region_caption(caption[0])
-            if cap.size != 0:
-                rois.append(roi)
-                caps.append(cap)
-        # captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
-        rois = np.array(rois)
-        captions = np.array(caps)
-        return rois, captions
-
-    def load_original_captions_and_rois(self, image_id):
-        """ Returns string instance captions of the given image ID. """
-        image_info = self.image_info[image_id]
-        rois = np.array(image_info['rois'])
-        captions = image_info['captions']
-        return rois, captions
-
-    def encode_region_caption(self, caption):
-        """ Convert caption to word embedding vector """
-        return encode_caption_v2(caption, self.word_to_id)
 
 
 class InferenceConfig(DenseCapConfig):
@@ -130,32 +25,59 @@ class InferenceConfig(DenseCapConfig):
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
-    DETECTION_NMS_THRESHOLD = 0.7
+
+    POST_NMS_ROIS_INFERENCE = 200
+    DETECTION_NMS_THRESHOLD = 0.5
+    DETECTION_MAX_INSTANCES = 100
 
     # Padding size
-    PADDING_SIZE = 10
+    PADDING_SIZE = 15
 
     def __init__(self, vocab_size, embedding_weights):
         super(InferenceConfig, self).__init__(vocab_size, embedding_weights)
 
 
+def generate_features(image, dataset, image_id, model):
+    # Run detection
+    rois, _ = dataset.load_captions_and_rois(image_id)
+    rois = np.expand_dims(rois, axis=0)
+    results = model.generate_captions([image], rois, verbose=0)
+    boxes = results[0]['rois']
+    features = results[0]['features']
+    return boxes, features
+
+
 class DenseCaptioningEvaluator:
-    def __init__(self, model, dataset, id_to_word):
+    def __init__(self, model, feature_model, text_metrics, dataset, id_to_word, word_to_id, config, model_name):
         """
         :param model: Dense Captioning keras model in inference mode
         :type model: keras model object
+        :param feature_model: ROI features model
+        :type feature_model: keras model object
         :param text_metrics: language metrics, one of {'SPICE', 'METEOR'}
         :type text_metrics: str
         :param dataset: the test dataset
         :type dataset: VisualGenomeDataset object
         :param id_to_word: mapping from id to words from the vocabulary
         :type id_to_word: dict
+        :param word_to_id: mapping from words to ids from the vocabulary
+        :type word_to_id: dict
+        :param config: configuration object
+        :type config: DenseCapConfig object
+        :param model_name: name of the model
+        :type model_name: str
         """
+        assert (text_metrics in {'SPICE', 'METEOR'})
         self.min_overlaps = [0.3, 0.4, 0.5, 0.6, 0.7]
         self.min_scores = [-1, 0, 0.05, 0.1, 0.15, 0.2, 0.25]
         self.model = model
+        self.feature_model = feature_model
+        self.method = text_metrics
         self.dataset = dataset
         self.id_to_word = id_to_word
+        self.word_to_id = word_to_id
+        self.config = config
+        self.model_name = model_name
         self.predictions = None
         self.ground_truths = None
 
@@ -233,7 +155,7 @@ class DenseCaptioningEvaluator:
 
         return images, gt_boxes, gt_captions
 
-    def get_generated_captions(self):
+    def get_generated_captions(self, num_images, images):
         """ Returns the generated dense captions from the model for the given images
 
         :param num_images: number of images
@@ -243,18 +165,107 @@ class DenseCaptioningEvaluator:
         :return: detected boxes, generated captions, log probabilities for each captions (box)
         :rtype: (list(numpy.array), list(list(str)), list(numpy.array))
         """
-        boxes = []
-        captions = []
-        log_probs = []
-        for image_id in self.dataset._image_ids:
-            image_info = self.dataset.image_info[image_id]
-            with open(f'../dataset/densecap/{image_info["id"]}.json', 'r', encoding='utf-8') as file:
-                predictions = json.loads(file.read())
-            captions.append([[cap['caption']] for cap in predictions['output']['captions']])
-            boxes.append(np.array([cap['bounding_box'] for cap in predictions['output']['captions']]))
-            log_probs.append(np.array([cap['confidence'] for cap in predictions['output']['captions']]))
+        boxes_file = 'dataset/' + self.model_name + '_predictions_boxes.pickle'
+        captions_file = 'dataset/' + self.model_name + '_predictions_caps.pickle'
+        log_probs_file = 'dataset/' + self.model_name + '_predictions_probs.pickle'
+        if os.path.exists(boxes_file) and os.path.exists(captions_file) and os.path.exists(log_probs_file):
+            with open(boxes_file, 'rb') as f1, open(captions_file, 'rb') as f2, open(log_probs_file, 'rb') as f3:
+                boxes = pickle.load(f1)
+                captions = pickle.load(f2)
+                log_probs = pickle.load(f3)
+        else:
+            boxes = []
+            captions = []
+            log_probs = []
+            for i in tqdm(list(range(num_images))):
+                # Run detection
+                im_id = self.dataset._image_ids[i]
+                _, window, _, _ = resize_image(images[i],
+                                               min_dim=self.config.IMAGE_MIN_DIM,
+                                               max_dim=self.config.IMAGE_MAX_DIM,
+                                               padding=self.config.IMAGE_PADDING)
+                img_boxes, img_features = generate_features(images[i], self.dataset, im_id, self.feature_model)
+                caps = []
+                for j in range(img_boxes.shape[0]):
+                    f = img_features[j]
+                    start_word = np.zeros(self.config.VOCABULARY_SIZE)
+                    prev = [start_word]
+                    for k in range(self.config.PADDING_SIZE - 1):
+                        res = self.model.predict([np.array([f]),
+                                                  np.array([pad_sequences([[np.argmax(cap) for cap in prev]],
+                                                                          self.config.PADDING_SIZE)[0]])])
+                        prev.append(res[0])
+                    caps.append(np.vstack(prev[1:]))
+                rois, img_captions = self.refine_generations(img_boxes, np.array(caps), window, self.config)
+                image_captions = []
+                for cap in img_captions.tolist():
+                    cap = ' '.join([decode_word(c, self.id_to_word) for c in cap])
+                    cap = cap.split(' .', maxsplit=1)[0]
+                    image_captions.append(cap)
+                boxes.append(rois)
+                word_prob_log = np.log(np.max(img_captions, axis=2))
+                log_prob = np.sum(word_prob_log, axis=1)
+                log_probs.append(log_prob)
+                captions.append(image_captions)
+            with open(boxes_file, 'wb') as f1, open(captions_file, 'wb') as f2, open(log_probs_file, 'wb') as f3:
+                pickle.dump(boxes, f1)
+                pickle.dump(captions, f2)
+                pickle.dump(log_probs, f3)
 
         return boxes, captions, log_probs
+
+    def refine_generations(self, rois, captions, window, config):
+        """Refine classified proposals and filter overlaps and return final
+        generations.
+
+        Inputs:
+            rois: [N, (y1, x1, y2, x2)] in normalized coordinates
+            captions: [N, embeddings]. Captions embeddings
+            window: (y1, x1, y2, x2) in image coordinates. The part of the image
+                that contains the image excluding the padding.
+
+        Returns generations shaped: [N, (y1, x1, y2, x2, embeddings)]
+        """
+        # Captions word IDs per ROI
+        word_probs = np.max(captions, axis=2)
+        word_probs_log = np.log(word_probs)
+        captions_scores = np.sum(word_probs_log, axis=1)
+        # Convert coordinates to image domain
+        # TODO: better to keep them normalized until later
+        # height, width = config.IMAGE_SHAPE[:2]
+        # rois *= np.array([height, width, height, width])
+        # # Clip boxes to image window
+        # refined_rois = self.clip_to_window(window, rois)
+        # # Round and cast to int since we're dealing with pixels now
+        # refined_rois = np.rint(refined_rois).astype(np.int32)
+
+        refined_rois = rois
+
+        # TODO: Filter out boxes with zero area
+
+        keep = non_max_suppression(rois, captions_scores,
+                                   config.DETECTION_NMS_THRESHOLD)
+
+        # Keep top generations
+        roi_count = config.DETECTION_MAX_INSTANCES
+        top_ids = np.argsort(captions_scores[keep])[::-1][:roi_count]
+        keep = keep[top_ids]
+
+        # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
+        # Coordinates are in image domain.
+        result = (refined_rois[keep], captions[keep])
+        return result
+
+    def clip_to_window(self, window, boxes):
+        """
+        window: (y1, x1, y2, x2). The window in the image we want to clip to.
+        boxes: [N, (y1, x1, y2, x2)]
+        """
+        boxes[:, 0] = np.maximum(np.minimum(boxes[:, 0], window[2]), window[0])
+        boxes[:, 1] = np.maximum(np.minimum(boxes[:, 1], window[3]), window[1])
+        boxes[:, 2] = np.maximum(np.minimum(boxes[:, 2], window[2]), window[0])
+        boxes[:, 3] = np.maximum(np.minimum(boxes[:, 3], window[3]), window[1])
+        return boxes
 
     @staticmethod
     def assign_detections_to_ground_truth(num_images, gt_boxes, gt_captions, boxes, captions, log_probs):
@@ -308,7 +319,7 @@ class DenseCaptioningEvaluator:
         return results
 
     def score_captions(self, records, method):
-        """ Scores generated captions using the SPICE metrics
+        """ Scores generated captions using text metrics
 
         :param records: records for aligned detections and generations with ground truths
         :type records: list(dict)
@@ -333,7 +344,7 @@ class DenseCaptioningEvaluator:
         for r in records:
             r1 = [x for x in r if len(x['references']) > 0]
             for rec in r1:
-                gens[str(i)] = rec['candidate']
+                gens[str(i)] = [rec['candidate']]
                 refs[str(i)] = [sent[0] for sent in rec['references']]
                 i += 1
         gens = tokenizer.tokenize(gens)
@@ -345,48 +356,45 @@ class DenseCaptioningEvaluator:
         scores.append(all_scores)
 
         return scores
-
+    
     def evaluate_captions(self):
         """
-        Evaluate generated dense captions
-        :return: {'map': map_value, 'ap_breakdown': ap_results, 'detmap': det_map, 'det_breakdown': det_results}
-        :rtype: dict
-
+            Evaluate generated dense captions
         """
         num_images = self.dataset.num_images
         image_ids = self.dataset._image_ids
 
-        _, gt_boxes, gt_captions = self.get_gt_captions(image_ids)
-        boxes, captions, log_probs = self.get_generated_captions()
+        images, gt_boxes, gt_captions = self.get_gt_captions(image_ids)
+        boxes, captions, log_probs = self.get_generated_captions(num_images, images)
 
         records = self.assign_detections_to_ground_truth(num_images, gt_boxes, gt_captions,
                                                          boxes, captions, log_probs)
         # text scores
-        if not os.path.exists('../dataset/densecap_f2000_scores_spice.pkl'):
+        if not os.path.exists('dataset/densecap_' + self.model_name + '_scores_spice.pkl'):
             print('Evaluating with SPICE...')
             scores = self.score_captions(records, 'SPICE')
             scores = [item for sublist in scores for item in sublist]
-            with open('../dataset/densecap_f2000_scores_spice.pkl', 'wb') as f:
+            with open('dataset/densecap_' + self.model_name + '_scores_spice.pkl', 'wb') as f:
                 pickle.dump(scores, f)
-        if not os.path.exists('../dataset/densecap_f2000_scores_rouge.pkl'):
+        if not os.path.exists('dataset/densecap_' + self.model_name + '_scores_rouge.pkl'):
             print('Evaluating with ROUGE...')
             scores = self.score_captions(records, 'ROUGE')
             scores = [item for sublist in scores for item in sublist]
-            with open('../dataset/densecap_f2000_scores_rouge.pkl', 'wb') as f:
+            with open('dataset/densecap_' + self.model_name + '_scores_rouge.pkl', 'wb') as f:
                 pickle.dump(scores, f)
-        if not os.path.exists('../dataset/densecap_f2000_scores_meteor.pkl'):
+        if not os.path.exists('dataset/densecap_' + self.model_name + '_scores_meteor.pkl'):
             print('Evaluating with METEOR...')
             scores = self.score_captions(records, 'METEOR')
             scores = [item for sublist in scores for item in sublist]
-            with open('../dataset/densecap_f2000_scores_meteor.pkl', 'wb') as f:
+            with open('dataset/densecap_' + self.model_name + '_scores_meteor.pkl', 'wb') as f:
                 pickle.dump(scores, f)
-        if not os.path.exists('../dataset/densecap_f2000_scores_cider.pkl'):
+        if not os.path.exists('dataset/densecap_' + self.model_name + '_scores_cider.pkl'):
             print('Evaluating with CIDER...')
             scores = self.score_captions(records, 'CIDER')
             scores = [item for sublist in scores for item in sublist]
-            with open('../dataset/densecap_f2000_scores_cider.pkl', 'wb') as f:
+            with open('dataset/densecap_' + self.model_name + '_scores_cider.pkl', 'wb') as f:
                 pickle.dump(scores, f)
-        if not os.path.exists('../dataset/densecap_f2000_scores_bleu_1.pkl'):
+        if not os.path.exists('dataset/densecap_' + self.model_name + '_scores_bleu_1.pkl'):
             print('Evaluating with BLEU...')
             scores = self.score_captions(records, 'BLEU')
             scores_1 = []
@@ -402,18 +410,18 @@ class DenseCaptioningEvaluator:
             scores_2 = [item for sublist in scores_2 for item in sublist]
             scores_3 = [item for sublist in scores_3 for item in sublist]
             scores_4 = [item for sublist in scores_4 for item in sublist]
-            with open('../dataset/densecap_f2000_scores_bleu_1.pkl', 'wb') as f:
+            with open('dataset/densecap_' + self.model_name + '_scores_bleu_1.pkl', 'wb') as f:
                 pickle.dump(scores_1, f)
-            with open('../dataset/densecap_f2000_scores_bleu_2.pkl', 'wb') as f:
+            with open('dataset/densecap_' + self.model_name + '_scores_bleu_2.pkl', 'wb') as f:
                 pickle.dump(scores_2, f)
-            with open('../dataset/densecap_f2000_scores_bleu_3.pkl', 'wb') as f:
+            with open('dataset/densecap_' + self.model_name + '_scores_bleu_3.pkl', 'wb') as f:
                 pickle.dump(scores_3, f)
-            with open('../dataset/densecap_f2000_scores_bleu_4.pkl', 'wb') as f:
+            with open('dataset/densecap_' + self.model_name + '_scores_bleu_4.pkl', 'wb') as f:
                 pickle.dump(scores_4, f)
 
-    def evaluate(self, method):
-        """
-        Evaluate generated dense captions
+    def evaluate(self):
+        """ Evaluate generated dense captions
+
         :return: {'map': map_value, 'ap_breakdown': ap_results, 'detmap': det_map, 'det_breakdown': det_results}
         :rtype: dict
 
@@ -421,13 +429,13 @@ class DenseCaptioningEvaluator:
         num_images = self.dataset.num_images
         image_ids = self.dataset._image_ids
 
-        _, gt_boxes, gt_captions = self.get_gt_captions(image_ids)
-        boxes, captions, log_probs = self.get_generated_captions()
+        images, gt_boxes, gt_captions = self.get_gt_captions(image_ids)
+        boxes, captions, log_probs = self.get_generated_captions(num_images, images)
 
         records = self.assign_detections_to_ground_truth(num_images, gt_boxes, gt_captions,
                                                          boxes, captions, log_probs)
         # text scores
-        scores = self.score_captions(records, method)
+        scores = self.score_captions(records, 'METEOR')
 
         # flatten everything
         records = [item for sublist in records for item in sublist]
@@ -483,66 +491,81 @@ class DenseCaptioningEvaluator:
 
         map_value = np.mean(list(ap_results.values()))
         det_map = np.mean(list(det_results.values()))
-        return {'map': map_value,
-                'ap_breakdown': ap_results,
-                'detmap': det_map,
-                'det_breakdown': det_results}
+        return {'map': map_value, 'ap_breakdown': ap_results, 'detmap': det_map, 'det_breakdown': det_results}
 
 
-def evaluate_test_captions():
+def evaluate_test_captions(results_file_path):
     """ Evaluates test set captions
 
     :param results_file_path: file path to save the results
     :type results_file_path: str
     :return: None
     """
-    # Root directory of the project
-    root_dir = os.getcwd()
+    inject = True
+    embeddings_file_path = 'dataset/glove.6B.300d.txt'
 
-    # Directory to save logs and trained model
-    model_dir = os.path.join(root_dir, "logs")
-
-    # Local path to trained weights file
-    model_path = os.path.join(root_dir, "img_cap_dense.h5")
-
-    # Directory of images to run detection on
-    image_dir = "../dataset/visual genome"
-
-    image_meta_file_path = '../dataset/image_data.json'
-    data_file_path = '../dataset/region_descriptions.json'
-
-    # load one-hot encodings
-    id_to_word_file = '../dataset/id_to_word.pickle'
-    word_to_id_file = '../dataset/word_to_id.pickle'
-    embedding_matrix_file = '../dataset/embedding_matrix.pickle'
-    id_to_word = pickle.load(open(id_to_word_file, 'rb'))
-    word_to_id = pickle.load(open(word_to_id_file, 'rb'))
-    embedding_matrix = pickle.load(open(embedding_matrix_file, 'rb'))
+    data_directory = 'dataset/visual genome/'
+    image_meta_file_path = 'dataset/image_data.json'
+    data_file_path = 'dataset/region_descriptions.json'
 
     with open(image_meta_file_path, 'r', encoding='utf-8') as file:
         image_meta_data = json.loads(file.read())
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
+    train_val_image_ids = image_ids_list[:100000]
     test_image_ids = image_ids_list[100000:102000]
-    # test_image_ids = [62, 65]
-    config = InferenceConfig(len(word_to_id), embedding_matrix)
+
+    id_to_word_file = 'dataset/id_to_word_v2.pickle'
+    word_to_id_file = 'dataset/word_to_id_v2.pickle'
+    embedding_matrix_file = 'dataset/embedding_matrix_v2.pickle'
+
+    if not os.path.exists(id_to_word_file) or not os.path.exists(word_to_id_file) \
+            or not os.path.exists(embedding_matrix_file):
+        embeddings = load_embeddings(embeddings_file_path)
+        tokens = tokenize_corpus(data_file_path, train_val_image_ids, embeddings)
+        word_to_id, id_to_word, embedding_matrix = load_corpus(list(tokens), embeddings, 300)
+
+        with open(id_to_word_file, 'wb') as f:
+            pickle.dump(id_to_word, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(word_to_id_file, 'wb') as f:
+            pickle.dump(word_to_id, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(embedding_matrix_file, 'wb') as f:
+            pickle.dump(embedding_matrix, f, protocol=pickle.HIGHEST_PROTOCOL)
+    else:
+        with open(id_to_word_file, 'rb') as f:
+            id_to_word = pickle.load(f)
+        with open(word_to_id_file, 'rb') as f:
+            word_to_id = pickle.load(f)
+        with open(embedding_matrix_file, 'rb') as f:
+            embedding_matrix = pickle.load(f)
+
+    config = DenseCapConfig(len(id_to_word), embedding_matrix)
     config.display()
 
-    # Testing dataset
+    features_model = load_model(use_generated_rois=True)
+
+    model = build_model((7, 7, 256), (10,), config, 256, inject)
+    model.load_weights('mask_rcnn_coco.h5', by_name=True)
+    print(model.summary())
+
     dataset_test = VisualGenomeDataset(word_to_id, config.PADDING_SIZE)
-    dataset_test.load_visual_genome(image_dir, test_image_ids,
-                                    image_meta_file_path, data_file_path)
+    dataset_test.load_visual_genome(data_directory, test_image_ids, image_meta_file_path,
+                                    data_file_path)
     dataset_test.prepare()
+    if inject:
+        model.load_weights('evaluate_models/models/model1-90-02-3.85.h5')
+        model_name = 'm1'
+    else:
+        model.load_weights('evaluate_models/models/model2-85-4.01.h5')
+        model_name = 'm2'
 
-    #  Create model object in inference mode.
-    model = DenseImageCapRCNN(mode="inference", model_dir=model_dir, config=config)
-
-    # Load weights trained on Visual Genome dense image captioning
-    model.load_weights(model_path, by_name=True)
-
-    evaluator = DenseCaptioningEvaluator(model, dataset_test, id_to_word)
+    evaluator = DenseCaptioningEvaluator(model, features_model, 'METEOR', dataset_test,
+                                         id_to_word, word_to_id, config, model_name)
     evaluator.evaluate_captions()
+    results = evaluator.evaluate()
+    with open(results_file_path, 'w') as file_path:
+        json.dump(results, file_path)
 
 
 if __name__ == '__main__':
-    evaluate_test_captions()
+    evaluate_test_captions('densecap_m1_results_test.json')

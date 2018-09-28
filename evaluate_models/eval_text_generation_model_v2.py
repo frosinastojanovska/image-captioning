@@ -22,8 +22,7 @@ from eval.cider.cider import Cider
 from eval.bleu.bleu import Bleu
 from eval.tokenizer.ptbtokenizer import PTBTokenizer
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
-
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 class DenseCapConfig(Config):
@@ -42,6 +41,10 @@ class DenseCapConfig(Config):
 
     STEPS_PER_EPOCH = 500
     VALIDATION_STEPS = 50
+
+    POST_NMS_ROIS_INFERENCE = 200
+    DETECTION_NMS_THRESHOLD = 0.7
+    DETECTION_MAX_INSTANCES = 100
 
     # Padding size
     PADDING_SIZE = 10
@@ -158,7 +161,7 @@ def build_model(features_shape, word_shape, config, units, inject=True):
     return KM.Model(inputs=[input_f, input_w], outputs=result)
 
 
-def generate_predictions(model, model_name, dataset, features_model, config, id_to_word):
+def generate_predictions_ground_truth_rois(model, model_name, dataset, features_model, config, id_to_word):
     if os.path.exists('../dataset/' + model_name + '_predictions.pickle'):
         with open('../dataset/' + model_name + '_predictions.pickle', 'rb') as f:
             predictions = pickle.load(f)
@@ -167,7 +170,6 @@ def generate_predictions(model, model_name, dataset, features_model, config, id_
         print('Generating predictions...')
 
         for k in tqdm(list(range(len(dataset._image_ids)))):
-        # for k in tqdm(list(range(5))):
             im_id = dataset._image_ids[k]
             features = generate_features(dataset, im_id, features_model)
             _, captions = dataset.load_captions_and_rois(im_id)
@@ -271,7 +273,7 @@ if __name__ == '__main__':
     config = DenseCapConfig(len(id_to_word), embedding_matrix)
     config.display()
 
-    features_model = load_model()
+    features_model = load_model(use_generated_rois=True)
 
     if inject:
         model_filepath = 'models/model1-{epoch:02d}-{val_loss:.2f}.h5'
@@ -296,5 +298,5 @@ if __name__ == '__main__':
         model.load_weights('models/model2-85-4.01.h5')
         model_name = 'm2-85'
 
-    preds = generate_predictions(model, model_name, dataset_test, features_model, config, id_to_word)
+    preds = generate_predictions_ground_truth_rois(model, model_name, dataset_test, features_model, config, id_to_word)
     score_predictions(preds, model_name)

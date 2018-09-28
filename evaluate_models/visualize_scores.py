@@ -5,31 +5,31 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def load_scores(model_name):
+def load_scores(model_name, subset=''):
     scores = {}
     if model_name == 'densecap':
-        with open('../dataset/' + model_name + '_scores_spice.pkl', 'rb') as f:
+        with open('../dataset/' + model_name + subset + '_scores_spice.pkl', 'rb') as f:
             spice = pickle.load(f)
         scores['SPICE'] = (np.average(spice), spice)
-        with open('../dataset/' + model_name + '_scores_rouge.pkl', 'rb') as f:
+        with open('../dataset/' + model_name + subset + '_scores_rouge.pkl', 'rb') as f:
             rouge = pickle.load(f)
         scores['ROUGE-L'] = (np.average(rouge), rouge)
-        with open('../dataset/' + model_name + '_scores_meteor.pkl', 'rb') as f:
+        with open('../dataset/' + model_name + subset + '_scores_meteor.pkl', 'rb') as f:
             meteor = pickle.load(f)
         scores['METEOR'] = (np.average(meteor), meteor)
-        with open('../dataset/' + model_name + '_scores_cider.pkl', 'rb') as f:
+        with open('../dataset/' + model_name + subset + '_scores_cider.pkl', 'rb') as f:
             cider = pickle.load(f)
         scores['CIDER'] = (np.average(cider), cider)
-        with open('../dataset/' + model_name + '_scores_bleu_1.pkl', 'rb') as f:
+        with open('../dataset/' + model_name + subset + '_scores_bleu_1.pkl', 'rb') as f:
             bleu = pickle.load(f)
         scores['BLEU_1'] = (np.average(bleu), bleu)
-        with open('../dataset/' + model_name + '_scores_bleu_2.pkl', 'rb') as f:
+        with open('../dataset/' + model_name + subset + '_scores_bleu_2.pkl', 'rb') as f:
             bleu = pickle.load(f)
         scores['BLEU_2'] = (np.average(bleu), bleu)
-        with open('../dataset/' + model_name + '_scores_bleu_3.pkl', 'rb') as f:
+        with open('../dataset/' + model_name + subset + '_scores_bleu_3.pkl', 'rb') as f:
             bleu = pickle.load(f)
         scores['BLEU_3'] = (np.average(bleu), bleu)
-        with open('../dataset/' + model_name + '_scores_bleu_4.pkl', 'rb') as f:
+        with open('../dataset/' + model_name + subset + '_scores_bleu_4.pkl', 'rb') as f:
             bleu = pickle.load(f)
         scores['BLEU_4'] = (np.average(bleu), bleu)
     else:
@@ -132,6 +132,16 @@ if __name__ == '__main__':
     eval_scores_densecap = load_scores('densecap')
     print_average_scores(eval_scores_densecap)
     plot_graph_scores_model_based(eval_scores_densecap, 'DenseCap')
+
+    print('=========== Model 1 f2000')
+    eval_scores_m1_f2000 = load_scores('densecap', '_m1')
+    print_average_scores(eval_scores_m1_f2000)
+    plot_graph_scores_model_based(eval_scores_m1_f2000, 'M1')
+
+    print('=========== DenseCap f2000')
+    eval_scores_densecap_f2000 = load_scores('densecap', '_f2000')
+    print_average_scores(eval_scores_densecap_f2000)
+    plot_graph_scores_model_based(eval_scores_densecap_f2000, 'DenseCap')
 
     plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'SPICE')
     plot_graph_scores_metric_based({'M1': eval_scores_m1, 'M2': eval_scores_m2, 'M3': eval_scores_m3}, 'ROUGE-L')

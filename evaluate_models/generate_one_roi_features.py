@@ -4,7 +4,7 @@ import numpy as np
 from modified_dense_model import DenseImageCapRCNN
 from config import Config
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 # Root directory of the project
@@ -56,9 +56,10 @@ config = InferenceConfig()
 config.display()
 
 
-def load_model():
+def load_model(use_generated_rois=False):
     # Create model object in inference mode.
-    model = DenseImageCapRCNN(mode="inference", model_dir=MODEL_DIR, config=config)
+    model = DenseImageCapRCNN(mode="inference", model_dir=MODEL_DIR, config=config,
+                              use_generated_rois=use_generated_rois)
     # Load weights trained on Visual Genome dense image captioning
     model.load_weights(MODEL_PATH, by_name=True)
 

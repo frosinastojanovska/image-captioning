@@ -1345,7 +1345,7 @@ class DenseImageCapRCNN:
     The actual Keras model is in the keras_model property.
     """
 
-    def __init__(self, mode, config, model_dir):
+    def __init__(self, mode, config, model_dir, use_generated_rois=False):
         """
         mode: Either "training" or "inference"
         config: A Sub-class of the Config class
@@ -1356,6 +1356,7 @@ class DenseImageCapRCNN:
         self.config = config
         self.model_dir = model_dir
         self.set_log_dir()
+        self.use_generated_rois = use_generated_rois
         self.keras_model = self.build(mode=mode, config=config)
 
     def build(self, mode, config):
@@ -1379,8 +1380,9 @@ class DenseImageCapRCNN:
             shape=config.IMAGE_SHAPE.tolist(), name="input_image")
         input_image_meta = KL.Input(shape=[None], name="input_image_meta")
 
-        input_rpn_bbox = KL.Input(
-            shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
+        if not self.use_generated_rois:
+            input_rpn_bbox = KL.Input(
+                shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
 
         if mode == "training":
             # RPN GT
@@ -1491,9 +1493,9 @@ class DenseImageCapRCNN:
             # Network Heads
             # TODO: verify that this handles zero padded ROIs
             _, img_cap_captions = lstm_generator_graph(rois, img_cap_feature_maps,
-                                                    config.IMAGE_SHAPE,
-                                                    config.POOL_SIZE, config.EMBEDDING_SIZE, config.PADDING_SIZE,
-                                                    128, False)
+                                                       config.IMAGE_SHAPE,
+                                                       config.POOL_SIZE, config.EMBEDDING_SIZE, config.PADDING_SIZE,
+                                                       128, False)
 
             # Losses
             rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")(
@@ -1517,10 +1519,11 @@ class DenseImageCapRCNN:
         else:
             # Network Heads
             # Caption text generator
-            h, w = K.shape(input_image)[1], K.shape(input_image)[2]
-            image_scale = K.cast(K.stack([h, w, h, w], axis=0), tf.float32)
-            gt_boxes = KL.Lambda(lambda x: x / image_scale)(input_rpn_bbox)
-            rpn_rois = gt_boxes
+            if not self.use_generated_rois:
+                h, w = K.shape(input_image)[1], K.shape(input_image)[2]
+                image_scale = K.cast(K.stack([h, w, h, w], axis=0), tf.float32)
+                gt_boxes = KL.Lambda(lambda x: x / image_scale)(input_rpn_bbox)
+                rpn_rois = gt_boxes
 
             features, img_cap_captions = lstm_generator_graph(rpn_rois, img_cap_feature_maps,
                                                               config.IMAGE_SHAPE,
@@ -1534,10 +1537,16 @@ class DenseImageCapRCNN:
             # output is [batch, num_generations, (y1, x1, y2, x2, embeddings)] in image coordinates
             generations = GenerationMatchLayer(config, name="mrcnn_detection")(
                 [rpn_rois, img_cap_captions, input_image_meta])
-            model = KM.Model([input_image, input_rpn_bbox, input_image_meta],
-                             [generations, img_cap_captions, features,
-                              rpn_rois, rpn_class, rpn_bbox],
-                             name='rcnn_imgcap')
+            if self.use_generated_rois:
+                model = KM.Model([input_image, input_image_meta],
+                                 [generations, img_cap_captions, features,
+                                  rpn_rois, rpn_class, rpn_bbox],
+                                 name='rcnn_imgcap')
+            else:
+                model = KM.Model([input_image, input_rpn_bbox, input_image_meta],
+                                 [generations, img_cap_captions, features,
+                                  rpn_rois, rpn_class, rpn_bbox],
+                                 name='rcnn_imgcap')
 
         # Add multi-GPU support.
         if config.GPU_COUNT > 1:
@@ -1578,7 +1587,7 @@ class DenseImageCapRCNN:
         exclude: list of layer names to exclude
         """
         import h5py
-        from keras.engine import saving as topology
+        from keras.engine import topology
 
         if exclude:
             by_name = True
@@ -1851,7 +1860,6 @@ class DenseImageCapRCNN:
 
         # Extract boxes, and image captions
         boxes = generations[:, :4]
-        image_captions = generations[:, 4:]
 
         # Compute scale and shift to translate coordinates to image domain.
         h_scale = image_shape[0] / (window[2] - window[0])
@@ -1870,9 +1878,8 @@ class DenseImageCapRCNN:
             (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0)[0]
         if exclude_ix.shape[0] > 0:
             boxes = np.delete(boxes, exclude_ix, axis=0)
-            image_captions = np.delete(image_captions, exclude_ix, axis=0)
 
-        return boxes, image_captions
+        return boxes
 
     def generate_captions(self, images, rois, verbose=0):
         """Runs the caption generation pipeline.
@@ -1898,19 +1905,33 @@ class DenseImageCapRCNN:
             log("image_metas", image_metas)
         # Run caption generation
         with graph.as_default():
-            generations, img_cap_captions, features, rpn_rois, rpn_class, rpn_bbox = \
-                self.keras_model.predict([molded_images, rois, image_metas], verbose=0)
+            if self.use_generated_rois:
+                generations, img_cap_captions, features, rpn_rois, rpn_class, rpn_bbox = \
+                    self.keras_model.predict([molded_images, image_metas], verbose=0)
+            else:
+                generations, img_cap_captions, features, rpn_rois, rpn_class, rpn_bbox = \
+                    self.keras_model.predict([molded_images, rois, image_metas], verbose=0)
         # Process detections
         results = []
         for i, image in enumerate(images):
-            # final_rois, final_captions = self.unmold_generations(generations[i],
-            #                                                      image.shape,
-            #                                                      windows[i])
+            # final_rois = self.unmold_generations(generations[i],
+            #                                      image.shape,
+            #                                      windows[i])
             # final_captions = final_captions.reshape((final_captions.shape[0],
             #                                          self.config.PADDING_SIZE, self.config.EMBEDDING_SIZE))
-            results.append({
-                "features": features[i][self.config.POST_NMS_ROIS_INFERENCE * i:self.config.POST_NMS_ROIS_INFERENCE * (i + 1)]
-            })
+            if self.use_generated_rois:
+                results.append({
+                    "features": features[i][
+                                self.config.POST_NMS_ROIS_INFERENCE * i:self.config.POST_NMS_ROIS_INFERENCE * (i + 1)],
+                    "rois": rpn_rois[i][
+                                self.config.POST_NMS_ROIS_INFERENCE * i:self.config.POST_NMS_ROIS_INFERENCE * (i + 1)]
+                })
+            else:
+                results.append({
+                    "features": features[i][
+                                self.config.POST_NMS_ROIS_INFERENCE * i:self.config.POST_NMS_ROIS_INFERENCE * (i + 1)]
+                })
+
         return results
 
     def ancestor(self, tensor, name, checked=None):

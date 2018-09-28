@@ -36,21 +36,21 @@ def plot_regions_distribution(data):
 
 
 def plot_caption_length_distribution(data):
-    distribution_array = [item['phrase'].count(' ') + 1 for sublist in [d['regions'] for d in data] for item in sublist]
+    distribution_array = [' '.join(item['phrase'].split()).count(' ') + 1 for sublist in [d['regions'] for d in data] for item in sublist]
     distribution = np.zeros(np.max(distribution_array) + 1, dtype=np.float32)
     distribution_index = np.array(range(np.max(distribution_array) + 1), dtype=np.float32)
     for d in distribution_array:
         distribution[d] += 1
     data = pd.DataFrame()
-    data['Number of captions'] = distribution_index
-    data['Caption length'] = distribution
+    data['Number of captions'] = distribution
+    data['Caption length'] = distribution_index
     sns.set(style='whitegrid', context='poster', font='DejaVu Sans', font_scale=1.5)
     f, ax = plt.subplots()
     ax.set(xscale='log', yscale='log')
-    plt.xlim(1e-1, 1e4)
+    plt.xlim(1e-1, 1e3)
     plt.ylim(1e-1, 1e8)
     ax.grid(False)
-    sns.regplot('Number of captions', 'Caption length', data, ax=ax, scatter_kws={"s": 200}, fit_reg=False,
+    sns.regplot('Caption length', 'Number of captions', data, ax=ax, scatter_kws={"s": 200}, fit_reg=False,
                 color='xkcd:lavender')
     ax.grid(False)
     plt.title('Caption length distribution')

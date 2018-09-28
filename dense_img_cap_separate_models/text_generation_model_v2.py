@@ -122,15 +122,16 @@ class VisualGenomeDataset(Dataset):
 
     def encode_region_caption(self, caption):
         """ Convert caption to word embedding vector """
-        return encode_caption_v2('<START> ' + caption + ' <END>', self.word_to_id)
+        return encode_caption_v2(caption, self.word_to_id)
 
 
 def load_sequences(dataset):
     sequences = []
     for _, image_id in zip(tqdm(list(range(len(dataset._image_ids)))), dataset._image_ids):
         _, captions = dataset.load_captions_and_rois(image_id)
-        steps = min(captions.shape[0], 50)
+        steps = captions.shape[0]
         for i in range(steps):
+            sequences.append((image_id, i, [0],  np.argmax(captions[i][0])))
             for j in range(1, len(captions[i])):
                 sequences.append((image_id, i, [np.argmax(cap) for cap in captions[i][:j]], np.argmax(captions[i][j])))
     return sequences
@@ -252,7 +253,7 @@ if __name__ == '__main__':
     features_model = load_model()
 
     if inject:
-        model_filepath = 'models1/model1-{epoch:02d}-{val_loss:.2f}.h5'
+        model_filepath = 'models/model1-90-{epoch:02d}-{val_loss:.2f}.h5'
         logs_filepath = 'logs/text_generation_m1.log'
     else:
         model_filepath = 'models/model2-{epoch:02d}-{val_loss:.2f}.h5'
@@ -268,7 +269,7 @@ if __name__ == '__main__':
     if train:
         # Training dataset
         dataset_train = VisualGenomeDataset(word_to_id, config.PADDING_SIZE)
-        dataset_train.load_visual_genome(data_directory, train_val_image_ids[:90000], image_meta_file_path,
+        dataset_train.load_visual_genome(data_directory, train_val_image_ids[75000:90000], image_meta_file_path,
                                          data_file_path)
         dataset_train.prepare()
 
@@ -278,16 +279,18 @@ if __name__ == '__main__':
                                        data_file_path)
         dataset_val.prepare()
 
-        if not os.path.exists(train_sequences_file) or not os.path.exists(val_sequences_file):
+        if not os.path.exists(train_sequences_file):
             train_sequences = load_sequences(dataset_train)
-            val_sequences = load_sequences(dataset_val)
             with open(train_sequences_file, 'wb') as f:
                 pickle.dump(train_sequences, f, protocol=pickle.HIGHEST_PROTOCOL)
-            with open(val_sequences_file, 'wb') as f:
-                pickle.dump(val_sequences, f, protocol=pickle.HIGHEST_PROTOCOL)
         else:
             with open(train_sequences_file, 'rb') as f:
                 train_sequences = pickle.load(f)
+        if not os.path.exists(val_sequences_file):
+            val_sequences = load_sequences(dataset_val)
+            with open(val_sequences_file, 'wb') as f:
+                pickle.dump(val_sequences, f, protocol=pickle.HIGHEST_PROTOCOL)
+        else:
             with open(val_sequences_file, 'rb') as f:
                 val_sequences = pickle.load(f)
 
@@ -302,8 +305,11 @@ if __name__ == '__main__':
         print(model.trainable_weights)
         print('Train on ' + str(len(train_sequences)) + ' samples')
         print('Validate on ' + str(len(val_sequences)) + ' samples')
-        model.load_weights('models/model1-85-3.69.h5', by_name=True, skip_mismatch=True)
-        model.fit_generator(train_data_generator, epochs=50, steps_per_epoch=500,
+        if inject:
+            model.load_weights('models/model1-75-02-3.85.h5', by_name=True, skip_mismatch=True)
+        else:
+            model.load_weights('models/model2-85-4.01.h5', by_name=True, skip_mismatch=True)
+        model.fit_generator(train_data_generator, epochs=2, steps_per_epoch=500,
                             callbacks=[checkpoint, csv_logger], validation_data=next(val_data_generator), verbose=1)
         #model.fit([train_X_f, train_X_w], train_y, epochs=200, batch_size=32, shuffle=True,
         #          callbacks=[checkpoint, csv_logger], validation_split=0.2)
@@ -314,10 +320,10 @@ if __name__ == '__main__':
                                          data_file_path)
         dataset_test.prepare()
         if inject:
-            model.load_weights('models/model1-85-3.69.h5')
+            model.load_weights('models/model1-20-2.04.h5')
             model_name = 'm1'
         else:
-            model.load_weights('models/model2-85-4.01.h5')
+            model.load_weights('models/model2-05-3.56.h5')
             model_name = 'm2'
         for im_id in dataset_test._image_ids[:15]:
             image_id = dataset_test.image_info[im_id]['id']
@@ -329,8 +335,7 @@ if __name__ == '__main__':
                 f = features[j]
                 r = rois[j]
                 c = captions[j]
-                prev = [c[0]]
-                # prev = [np.zeros(config.VOCABULARY_SIZE, dtype=np.float64)]
+                prev = [np.zeros(config.VOCABULARY_SIZE, dtype=np.float64)]
                 for i in range(config.PADDING_SIZE - 1):
                     res = model.predict([np.array([f]), np.array([pad_sequences([[np.argmax(cap) for cap in prev]],
                                                                                 config.PADDING_SIZE)[0]])])
