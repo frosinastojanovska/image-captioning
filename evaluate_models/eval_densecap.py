@@ -4,19 +4,17 @@ import pickle
 import numpy as np
 import skimage.io as skiimage_io
 import skimage.color as skimage_color
-from tqdm import tqdm
 
+from config import Config
 from utils import Dataset, compute_overlaps
 from preprocess import decode_caption, encode_caption_v2
-from dense_model import DenseImageCapRCNN
-from config import Config
 
 
+from eval.bleu.bleu import Bleu
+from eval.cider.cider import Cider
 from eval.spice.spice import Spice
 from eval.rouge.rouge import Rouge
 from eval.meteor.meteor import Meteor
-from eval.cider.cider import Cider
-from eval.bleu.bleu import Bleu
 from eval.tokenizer.ptbtokenizer import PTBTokenizer
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
@@ -140,22 +138,14 @@ class InferenceConfig(DenseCapConfig):
 
 
 class DenseCaptioningEvaluator:
-    def __init__(self, model, dataset, id_to_word):
+    def __init__(self, dataset):
         """
-        :param model: Dense Captioning keras model in inference mode
-        :type model: keras model object
-        :param text_metrics: language metrics, one of {'SPICE', 'METEOR'}
-        :type text_metrics: str
         :param dataset: the test dataset
         :type dataset: VisualGenomeDataset object
-        :param id_to_word: mapping from id to words from the vocabulary
-        :type id_to_word: dict
         """
         self.min_overlaps = [0.3, 0.4, 0.5, 0.6, 0.7]
         self.min_scores = [-1, 0, 0.05, 0.1, 0.15, 0.2, 0.25]
-        self.model = model
         self.dataset = dataset
-        self.id_to_word = id_to_word
         self.predictions = None
         self.ground_truths = None
 
@@ -236,10 +226,6 @@ class DenseCaptioningEvaluator:
     def get_generated_captions(self):
         """ Returns the generated dense captions from the model for the given images
 
-        :param num_images: number of images
-        :type num_images: int
-        :param images: the images
-        :type images: list(numpy.array)
         :return: detected boxes, generated captions, log probabilities for each captions (box)
         :rtype: (list(numpy.array), list(list(str)), list(numpy.array))
         """
@@ -251,7 +237,10 @@ class DenseCaptioningEvaluator:
             with open(f'../dataset/densecap/{image_info["id"]}.json', 'r', encoding='utf-8') as file:
                 predictions = json.loads(file.read())
             captions.append([[cap['caption']] for cap in predictions['output']['captions']])
-            boxes.append(np.array([cap['bounding_box'] for cap in predictions['output']['captions']]))
+            boxes.append(np.array([[cap['bounding_box'][1], cap['bounding_box'][0],
+                                    cap['bounding_box'][1] + cap['bounding_box'][3],
+                                    cap['bounding_box'][0] + cap['bounding_box'][2]]
+                                   for cap in predictions['output']['captions']]))
             log_probs.append(np.array([cap['confidence'] for cap in predictions['output']['captions']]))
 
         return boxes, captions, log_probs
@@ -489,22 +478,13 @@ class DenseCaptioningEvaluator:
                 'det_breakdown': det_results}
 
 
-def evaluate_test_captions():
+def evaluate_test_captions(results_file_path):
     """ Evaluates test set captions
 
     :param results_file_path: file path to save the results
     :type results_file_path: str
     :return: None
     """
-    # Root directory of the project
-    root_dir = os.getcwd()
-
-    # Directory to save logs and trained model
-    model_dir = os.path.join(root_dir, "logs")
-
-    # Local path to trained weights file
-    model_path = os.path.join(root_dir, "img_cap_dense.h5")
-
     # Directory of images to run detection on
     image_dir = "../dataset/visual genome"
 
@@ -512,10 +492,8 @@ def evaluate_test_captions():
     data_file_path = '../dataset/region_descriptions.json'
 
     # load one-hot encodings
-    id_to_word_file = '../dataset/id_to_word.pickle'
     word_to_id_file = '../dataset/word_to_id.pickle'
     embedding_matrix_file = '../dataset/embedding_matrix.pickle'
-    id_to_word = pickle.load(open(id_to_word_file, 'rb'))
     word_to_id = pickle.load(open(word_to_id_file, 'rb'))
     embedding_matrix = pickle.load(open(embedding_matrix_file, 'rb'))
 
@@ -524,7 +502,6 @@ def evaluate_test_captions():
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
     test_image_ids = image_ids_list[100000:102000]
-    # test_image_ids = [62, 65]
     config = InferenceConfig(len(word_to_id), embedding_matrix)
     config.display()
 
@@ -534,15 +511,12 @@ def evaluate_test_captions():
                                     image_meta_file_path, data_file_path)
     dataset_test.prepare()
 
-    #  Create model object in inference mode.
-    model = DenseImageCapRCNN(mode="inference", model_dir=model_dir, config=config)
-
-    # Load weights trained on Visual Genome dense image captioning
-    model.load_weights(model_path, by_name=True)
-
-    evaluator = DenseCaptioningEvaluator(model, dataset_test, id_to_word)
+    evaluator = DenseCaptioningEvaluator(dataset_test)
     evaluator.evaluate_captions()
+    results = evaluator.evaluate('METEOR')
+    with open(results_file_path, 'w') as file_path:
+        json.dump(results, file_path)
 
 
 if __name__ == '__main__':
-    evaluate_test_captions()
+    evaluate_test_captions('densecap_results_test.json')
