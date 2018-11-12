@@ -69,7 +69,6 @@ model = ROITagRCNN(mode="inference", model_dir=MODEL_DIR, config=config)
 # Load weights trained on Visual Genome dense image captioning
 model.load_weights(MODEL_PATH, by_name=True)
 
-ground_truth_rois, ground_truth_tags = dataset_test.load_original_rois_and_tags(image_id)
 # Run detection
 image = dataset_test.load_image(image_id)
 results = model.generate_roi_tags([image], verbose=1)
@@ -78,9 +77,12 @@ results = model.generate_roi_tags([image], verbose=1)
 r = results[0]
 tags = []
 for tag_vector in r['tags']:
+    tag_vector[tag_vector < config.DETECTION_MIN_CONFIDENCE] = 0
     tags.append(', '.join(decode_tags(tag_vector, class_id_to_tag)))
 
-draw_boxes_and_tags(image, ground_truth_rois, ground_truth_tags, title=f'Image {str(image_ids[image_id])}',
-                    file_path='ground_truth.png')
 draw_boxes_and_tags(image, r['rois'], tags, title=f'Image {str(image_ids[image_id])}',
                     file_path='predicted.png')
+
+ground_truth_rois, ground_truth_tags = dataset_test.load_original_rois_and_tags(image_id)
+draw_boxes_and_tags(image, ground_truth_rois, ground_truth_tags, title=f'Image {str(image_ids[image_id])}',
+                    file_path='ground_truth.png')

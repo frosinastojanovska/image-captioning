@@ -189,8 +189,8 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE,
-                epochs=100,
-                layers="no_rpn")
+                epochs=200,
+                layers="3+")
 
     end_time = time.time()
     print(end_time - start_time)

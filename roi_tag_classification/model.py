@@ -7,6 +7,7 @@ Code taken from https://github.com/matterport/Mask_RCNN and modified by Frosina 
 
 import os
 import re
+import math
 import keras
 import random
 import logging
@@ -42,6 +43,46 @@ def log(text, array=None):
             array.min() if array.size else "",
             array.max() if array.size else ""))
     print(text)
+
+
+def focal_loss(y_true, y_pred, alpha=0.25, gamma=2.0):
+    """ Compute the focal loss given the target tensor and the predicted tensor.
+    As defined in https://arxiv.org/abs/1708.02002
+    Args
+        y_true: Tensor of target data.
+        y_pred: Tensor of predicted data.
+        alpha: Scale the focal weight with alpha.
+        gamma: Take the power of the focal weight with gamma.
+    Returns
+        The focal loss of y_pred w.r.t. y_true.
+    """
+    alpha_factor = K.ones_like(y_true) * alpha
+    alpha_factor = tf.where(keras.backend.equal(y_true, 1), alpha_factor, 1 - alpha_factor)
+    focal_weight = tf.where(keras.backend.equal(y_true, 1), 1 - y_pred, y_pred)
+    focal_weight = alpha_factor * focal_weight ** gamma
+
+    cls_loss = focal_weight * K.binary_crossentropy(y_true, y_pred)
+
+    return K.sum(cls_loss)
+
+
+class PriorProbability(keras.initializers.Initializer):
+    """ Apply a prior probability to the weights.
+    """
+
+    def __init__(self, probability=0.01):
+        self.probability = probability
+
+    def get_config(self):
+        return {
+            'probability': self.probability
+        }
+
+    def __call__(self, shape, dtype=None):
+        # set bias to -log((1 - p)/p) for foreground
+        result = np.ones(shape, dtype=dtype) * -math.log((1 - self.probability) / self.probability)
+
+        return result
 
 
 class BatchNorm(KL.BatchNormalization):
@@ -600,7 +641,9 @@ def refine_generations(rois, classes, window, config):
     Returns generations shaped: [N, (y1, x1, y2, x2, NUM_CLASSES)]
     """
     # Captions word IDs per ROI
-    classes_scores = np.array([np.sum(np.log(classes[i][classes[i] > 0])) for i in range(classes.shape[0])])
+    classes_scores = np.array([np.sum(np.log(classes[i][classes[i] > config.DETECTION_MIN_CONFIDENCE]))
+                               if len(classes[i][classes[i] > config.DETECTION_MIN_CONFIDENCE]) > 0 else -3.4e+38
+                               for i in range(classes.shape[0])])
     # Convert coordinates to image domain
     # TODO: better to keep them normalized until later
     height, width = config.IMAGE_SHAPE[:2]
@@ -611,16 +654,15 @@ def refine_generations(rois, classes, window, config):
     refined_rois = np.rint(refined_rois).astype(np.int32)
 
     # TODO: Filter out boxes with zero area
-
     keep = utils.non_max_suppression(rois, classes_scores,
                                      config.DETECTION_NMS_THRESHOLD)
 
     # Keep top generations
     roi_count = config.DETECTION_MAX_INSTANCES
     top_ids = keep[:roi_count]
-    keep = keep[top_ids]
+    keep = top_ids
 
-    # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
+    # Arrange output as [N, (y1, x1, y2, x2, classes vector)]
     # Coordinates are in image domain.
     result = np.hstack((refined_rois[keep],
                         classes[keep].reshape(classes[keep].shape[0], -1)))
@@ -750,7 +792,8 @@ def classifier_graph(rois, img_cap_feature_maps, config):
                              name="pool_squeeze")(x)
 
     # Classifier head
-    class_logits = KL.TimeDistributed(KL.Dense(config.NUM_CLASSES),
+    class_logits = KL.TimeDistributed(KL.Dense(config.NUM_CLASSES, bias_initializer=PriorProbability(),
+                                      kernel_initializer=keras.initializers.normal(mean=0.0, stddev=0.01, seed=None)),
                                       name='roitag_class_logits')(features_new)
     probs = KL.TimeDistributed(KL.Activation("sigmoid"),
                                name="roitag_class")(class_logits)
@@ -839,7 +882,7 @@ def roi_tag_classes_loss_graph(target_classes, generated_classes):
     y_pred_masked = tf.gather_nd(generated_classes, indices)
 
     loss = K.switch(tf.size(y_true_masked) > 0,
-                    K.mean(K.binary_crossentropy(target=tf.cast(y_true_masked, tf.float32), output=y_pred_masked)),
+                    K.mean(focal_loss(y_true=tf.cast(y_true_masked, tf.float32), y_pred=y_pred_masked)),
                     tf.constant(0.0))
     return loss
 
@@ -907,7 +950,7 @@ def build_detection_targets(rpn_rois, gt_classes, gt_boxes, config):
     # according to XinLei Chen's paper, it doesn't help.
 
     # Trim empty padding in gt_boxes
-    classes = np.where(gt_classes != '')[0]
+    classes = np.where(np.sum(gt_classes, axis=-1) > 0)[0]
     assert classes.shape[0] > 0, "Image must contain classes."
     gt_classes = gt_classes[classes]
     gt_boxes = gt_boxes[classes]
@@ -1557,12 +1600,13 @@ class ROITagRCNN:
         # Update the log directory
         self.set_log_dir(filepath)
 
-    def compile(self, learning_rate):
+    def compile(self, learning_rate, momentum):
         """Gets the model ready for training. Adds losses, regularization, and
         metrics. Then calls the Keras compile() function.
         """
         # Optimizer object
-        optimizer = keras.optimizers.Adam(lr=learning_rate, clipnorm=0.5, amsgrad=True)
+        optimizer = keras.optimizers.SGD(lr=learning_rate, momentum=momentum,
+                                         clipnorm=5.0)
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
@@ -1726,7 +1770,7 @@ class ROITagRCNN:
         log("\nStarting at epoch {}. LR={}\n".format(self.epoch, learning_rate))
         log("Checkpoint Path: {}".format(self.checkpoint_path))
         self.set_trainable(layers)
-        self.compile(learning_rate)
+        self.compile(learning_rate, self.config.LEARNING_MOMENTUM)
 
         # Work-around for Windows: Keras fails on Windows when using
         # multiprocessing workers. See discussion here:
