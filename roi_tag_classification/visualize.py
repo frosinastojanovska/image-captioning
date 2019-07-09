@@ -5,7 +5,7 @@ from matplotlib import patches
 import matplotlib.pyplot as plt
 
 
-def draw_boxes_and_captions(image, boxes, captions, title=""):
+def draw_boxes_and_tags(image, boxes, tags, title='', file_path=None):
     _, ax = plt.subplots(1, figsize=(12, 12))
     n = boxes.shape[0]
     colors = random_colors(n)
@@ -35,16 +35,18 @@ def draw_boxes_and_captions(image, boxes, captions, title=""):
             ax.add_patch(p)
 
         # Captions
-        if captions is not None:
-            caption = captions[i]
-            ax.text(x1, y1, caption, size=11, verticalalignment='top',
+        if tags is not None:
+            tags_current = tags[i]
+            ax.text(x1, y1, tags_current, size=11, verticalalignment='top',
                     color='w', backgroundcolor="none",
                     bbox={'facecolor': color, 'alpha': 0.5,
                           'pad': 2, 'edgecolor': 'none'})
 
     ax.imshow(drawn_image.astype(np.uint8))
-    plt.savefig('result.png')
-    plt.show()
+    if file_path is not None:
+        plt.savefig(file_path)
+    else:
+        plt.show()
 
 
 def random_colors(n, bright=True):

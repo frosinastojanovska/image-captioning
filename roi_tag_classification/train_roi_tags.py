@@ -1,53 +1,46 @@
 import os
 import time
 import json
+import pickle
 import numpy as np
 import skimage.io as skiimage_io
 import skimage.color as skimage_color
-from keras.preprocessing.sequence import pad_sequences
 
-import utils
+from utils import Dataset
 from config import Config
-import dense_model as modellib
-from preprocess import encode_caption, load_embeddings, load_embeddings_model, tokenize_corpus, reduce_embeddings
-from gensim.models import KeyedVectors
-import _pickle
+from model import ROITagRCNN
+from preprocess import encode_region_tags, decode_tags, load_corpus, tokenize_corpus
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
-class DenseCapConfig(Config):
+class RoiTagConfig(Config):
     """Configuration for training on the toy shapes dataset.
     Derives from the base Config class and overrides values specific
     to the toy shapes dataset.
     """
     # Give the configuration a recognizable name
-    NAME = "dense image captioning"
+    NAME = "roitag_rcnn"
 
-    # Train on 1 GPU and 8 images per GPU. We can put multiple images on each
-    # GPU because the images are small. Batch size is 8 (GPUs * images/GPU).
+    # Train on 1 GPU and n images per GPU. Batch size is n (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 3
+    IMAGES_PER_GPU = 2
 
-    STEPS_PER_EPOCH = 500
+    STEPS_PER_EPOCH = 1000
     VALIDATION_STEPS = 50
+    LEARNING_RATE = 0.001
 
-    # Embedding size
-    EMBEDDING_SIZE = 100
-
-    # Padding size
-    PADDING_SIZE = 5
-
-    # Reduce word embeddings
-    REDUCE_EMBEDDINGS = True
+    def __init__(self, num_classes):
+        super(RoiTagConfig, self).__init__()
+        # Vocabulary size
+        self.NUM_CLASSES = num_classes
 
 
-class VisualGenomeDataset(utils.Dataset):
-    def __init__(self, embeddings, padding_size, vocabulary):
-        super().__init__()
-        self.word_embeddings = embeddings
-        self.padding_size = padding_size
-        self.vocabulary = vocabulary
+class VisualGenomeDataset(Dataset):
+    def __init__(self, tags_to_class_id, class_ids_to_tag):
+        super(VisualGenomeDataset, self).__init__()
+        self.tag_to_class_id = tags_to_class_id
+        self.class_id_to_tag = class_ids_to_tag
 
     def load_visual_genome(self, data_dir, image_ids, image_meta_file, data_file):
         with open(data_file, 'r', encoding='utf-8') as doc:
@@ -75,13 +68,12 @@ class VisualGenomeDataset(utils.Dataset):
             )
 
     def image_reference(self, image_id):
-        """Return a link to the image in the Stanford Website."""
+        """ Return a link to the image in the Stanford Website. """
         info = self.image_info[image_id]
         return "https://cs.stanford.edu/people/rak248/VG_100K/{}.jpg".format(info["id"])
 
     def load_image(self, image_id):
-        """Load the specified image and return a [H,W,3] Numpy array.
-        """
+        """ Load the specified image and return a [H,W,3] Numpy array. """
         # Load image
         image = skiimage_io.imread(self.image_info[image_id]['path'])
         # If grayscale. Convert to RGB for consistency.
@@ -89,39 +81,37 @@ class VisualGenomeDataset(utils.Dataset):
             image = skimage_color.gray2rgb(image)
         return image
 
-    def load_captions_and_rois(self, image_id):
-        """Generate instance masks for shapes of the given image ID.
-        """
+    def load_rois_and_tags(self, image_id):
+        """ Generate instance captions of the given image ID. """
         image_info = self.image_info[image_id]
-        # rois = np.array(image_info['rois'])
-        # captions = image_info['captions']
         rois = []
-        caps = []
+        tags = []
         for roi, caption in zip(image_info['rois'], image_info['captions']):
-            cap = self.encode_region_caption(caption[0], self.word_embeddings, self.vocabulary)
-            if cap.size != 0:
-                rois.append(roi)
-                caps.append(cap)
-        captions = pad_sequences(caps, maxlen=self.padding_size, padding='post', dtype='float').astype(np.float32)
+            tag_vec = self.encode_region_tags(caption[0])
+            tags.append(tag_vec)
+            rois.append(roi)
+        tags = np.array(tags)
         rois = np.array(rois)
-        return rois, captions
+        return rois, tags
 
-    def encode_region_caption(self, caption, embeddings, vocabulary):
-        """ Convert caption to word embedding vector """
-        return encode_caption(caption, embeddings, vocabulary)
+    def load_original_rois_and_tags(self, image_id):
+        """ Returns string instance captions of the given image ID. """
+        image_info = self.image_info[image_id]
+        rois = np.array(image_info['rois'])
+        captions = image_info['captions']
+        tags = []
+        for caption in captions:
+            tag_vec = self.encode_region_tags(caption[0])
+            tags_current = decode_tags(tag_vec, self.class_id_to_tag)
+            tags.append(', '.join(tags_current))
+        return rois, tags
+
+    def encode_region_tags(self, caption):
+        """ Convert caption to encoded tag vector """
+        return encode_region_tags(caption, self.tag_to_class_id)
 
 
 if __name__ == '__main__':
-    '''
-    import keras.backend as K
-    K.clear_session()
-    import tensorflow as tf
-    config = tf.ConfigProto()
-    config.gpu_options.per_process_gpu_memory_fraction = 0.5  # maximun alloc gpu50% of MEM
-    config.gpu_options.allow_growth = True  # allocate dynamically
-    sess = tf.Session(config=config)
-    '''
-
     # Root directory of the project
     ROOT_DIR = os.getcwd()
 
@@ -129,51 +119,49 @@ if __name__ == '__main__':
     MODEL_DIR = os.path.join(ROOT_DIR, "logs_dense_img_cap")
 
     # Local path to trained weights file
-    COCO_MODEL_PATH = os.path.join(ROOT_DIR, "../rcnn_coco.h5")
-    config = DenseCapConfig()
-    config.display()
+    COCO_MODEL_PATH = os.path.join(ROOT_DIR, "../mask_rcnn_coco.h5")
 
     data_directory = '../dataset/visual genome/'
     image_meta_file_path = '../dataset/image_data.json'
     data_file_path = '../dataset/region_descriptions.json'
-    original_glove_file = '../dataset/glove.6B.100d.txt'
-    glove_file = '../dataset/glove.6B.100d_reduced.txt'
-    word2vec_file = '../dataset/glove.6B.100d.txt.word2vec'
 
     with open(image_meta_file_path, 'r', encoding='utf-8') as file:
         image_meta_data = json.loads(file.read())
     image_ids_list = [meta['image_id'] for meta in image_meta_data]
 
-    # image_ids = [int(s.split('.')[0]) for s in os.listdir(data_directory)]
-
     train_image_ids = image_ids_list[:90000]
     val_image_ids = image_ids_list[90000:100000]
     test_image_ids = image_ids_list[100000:]
 
-    # load reduced vocabulary
-    if os.path.exists('vocabulary.pickle'):
-        vocabulary = _pickle.load(open('vocabulary.pickle', 'rb'))
+    # load tags ids
+    class_id_to_tag_file = '../dataset/class_id_to_tag.pickle'
+    tag_to_class_id_file = '../dataset/tag_to_class_id.pickle'
+
+    if not os.path.exists(class_id_to_tag_file) or not os.path.exists(tag_to_class_id_file):
+        tokens = tokenize_corpus(data_file_path, train_image_ids)
+        tag_to_class_id, class_id_to_tag = load_corpus(list(tokens))
+
+        with open(class_id_to_tag_file, 'wb') as f:
+            pickle.dump(class_id_to_tag, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(tag_to_class_id_file, 'wb') as f:
+            pickle.dump(tag_to_class_id, f, protocol=pickle.HIGHEST_PROTOCOL)
     else:
-        vocabulary = tokenize_corpus(data_file_path, train_image_ids, val_image_ids)
-        with open('vocabulary.pickle', 'wb') as handle:
-            _pickle.dump(vocabulary, handle, protocol=4)
+        with open(class_id_to_tag_file, 'rb') as f:
+            class_id_to_tag = pickle.load(f)
+        with open(tag_to_class_id_file, 'rb') as f:
+            tag_to_class_id = pickle.load(f)
 
-    # reduce word embeddings
-    if config.REDUCE_EMBEDDINGS:
-        reduce_embeddings(vocabulary, original_glove_file, glove_file)
-
-    # load word embeddings
-    # word_embeddings = load_embeddings(glove_file)
-    word_embeddings = load_embeddings_model(glove_file, word2vec_file)
+    config = RoiTagConfig(len(class_id_to_tag))
+    config.display()
 
     # Training dataset
-    dataset_train = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE, vocabulary)
+    dataset_train = VisualGenomeDataset(tag_to_class_id, class_id_to_tag)
     dataset_train.load_visual_genome(data_directory, train_image_ids,
                                      image_meta_file_path, data_file_path)
     dataset_train.prepare()
 
     # Validation dataset
-    dataset_val = VisualGenomeDataset(word_embeddings, config.PADDING_SIZE, vocabulary)
+    dataset_val = VisualGenomeDataset(tag_to_class_id, class_id_to_tag)
     dataset_val.load_visual_genome(data_directory, val_image_ids,
                                    image_meta_file_path, data_file_path)
     dataset_val.prepare()
@@ -181,17 +169,18 @@ if __name__ == '__main__':
     init_with = 'coco'
 
     # Create model in training mode
-    model = modellib.DenseImageCapRCNN(mode="training", config=config,
-                                       model_dir=MODEL_DIR)
+    model = ROITagRCNN(mode="training", config=config,
+                       model_dir=MODEL_DIR)
 
     if init_with == "last":
         # Load the last model you trained and continue training
         model.load_weights(model.find_last()[1], by_name=True)
     else:
         # Load weights trained on MS COCO, but skip layers that
-        # are different due to the different
-        # TODO: correct this!!!!!!!!!!!!!
+        # are different
         model.load_weights(COCO_MODEL_PATH, by_name=True)
+
+    print(model.keras_model.summary())
 
     start_time = time.time()
     # Fine tune all layers
@@ -200,8 +189,8 @@ if __name__ == '__main__':
     # train by name pattern.
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE,
-                epochs=250,
-                layers="lstm_only")
+                epochs=200,
+                layers="3+")
 
     end_time = time.time()
     print(end_time - start_time)

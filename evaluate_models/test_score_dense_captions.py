@@ -155,6 +155,33 @@ class DenseCaptioningEvaluator:
 
         return images, gt_boxes, gt_captions
 
+    def unmold_generations(self, boxes, image_shape, window):
+        """Reformats the detections of one image from the format of the neural
+        network output to a format suitable for use in the rest of the
+        application.
+
+        generations: [N, (y1, x1, y2, x2, caption)]
+        image_shape: [height, width, depth] Original size of the image before resizing
+        window: [y1, x1, y2, x2] Box in the image where the real image is
+                excluding the padding.
+
+        Returns:
+        boxes: [N, (y1, x1, y2, x2)] Bounding boxes in pixels
+        captions: [N] string caption for each bounding box
+        """
+        # Compute scale and shift to translate coordinates to image domain.
+        h_scale = image_shape[0] / (window[2] - window[0])
+        w_scale = image_shape[1] / (window[3] - window[1])
+        scale = min(h_scale, w_scale)
+        shift = window[:2]  # y, x
+        scales = np.array([scale, scale, scale, scale])
+        shifts = np.array([shift[0], shift[1], shift[0], shift[1]])
+
+        # Translate bounding boxes to image domain
+        boxes = np.multiply(boxes - shifts, scales).astype(np.int32)
+
+        return boxes
+
     def get_generated_captions(self, num_images, images):
         """ Returns the generated dense captions from the model for the given images
 
@@ -197,6 +224,7 @@ class DenseCaptioningEvaluator:
                         prev.append(res[0])
                     caps.append(np.vstack(prev[1:]))
                 rois, img_captions = self.refine_generations(img_boxes, np.array(caps), window, self.config)
+                rois = self.unmold_generations(rois, images[i].shape, window)
                 image_captions = []
                 for cap in img_captions.tolist():
                     cap = ' '.join([decode_word(c, self.id_to_word) for c in cap])
@@ -230,8 +258,8 @@ class DenseCaptioningEvaluator:
         word_probs = np.max(captions, axis=2)
         word_probs_log = np.log(word_probs)
         captions_scores = np.sum(word_probs_log, axis=1)
-        # Convert coordinates to image domain
-        # TODO: better to keep them normalized until later
+        # # Convert coordinates to image domain
+        # # TODO: better to keep them normalized until later
         # height, width = config.IMAGE_SHAPE[:2]
         # rois *= np.array([height, width, height, width])
         # # Clip boxes to image window
@@ -240,8 +268,6 @@ class DenseCaptioningEvaluator:
         # refined_rois = np.rint(refined_rois).astype(np.int32)
 
         refined_rois = rois
-
-        # TODO: Filter out boxes with zero area
 
         keep = non_max_suppression(rois, captions_scores,
                                    config.DETECTION_NMS_THRESHOLD)
