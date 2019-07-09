@@ -43,8 +43,8 @@ def compute_iou(box, boxes, box_area, boxes_area):
     x1 = np.maximum(box[1], boxes[:, 1])
     x2 = np.minimum(box[3], boxes[:, 3])
     intersection = np.maximum(x2 - x1, 0) * np.maximum(y2 - y1, 0)
-    union = box_area + boxes_area[:] - intersection[:]
-    iou = intersection / union
+    union = box_area + boxes_area[:]
+    iou = 2 * intersection / union
     return iou
 
 
